@@ -1,9 +1,14 @@
 import { BaseProvider, ProviderError } from '@/lib/providers/base';
-import { puterChat, puterStream, getPuterProviderStatus } from './chat';
+import { puterChat, puterStream } from './chat';
 import { textToSpeech, speechToText } from './speech';
 import { generateImage, visionChat } from './image';
 import { normalizeResponse, formatMessages } from './normalize';
-import { isPuterAvailable, waitForPuter } from './runtime';
+import {
+  isPuterAvailable,
+  waitForPuter,
+  getPuterRuntimeState,
+  getPuterReadiness,
+} from './runtime';
 import type { Message, AIChunk, LegacyModel } from '@/types';
 
 const PUTER_MODELS: LegacyModel[] = [
@@ -88,4 +93,12 @@ export class PuterProvider extends BaseProvider {
 // Re-exports
 export { puterChat, puterStream, textToSpeech, speechToText, generateImage, visionChat };
 export { normalizeResponse, formatMessages };
-export { isPuterAvailable, waitForPuter, getPuterProviderStatus };
+export { isPuterAvailable, waitForPuter };
+
+export function getPuterProviderStatus() {
+  return {
+    readiness: getPuterReadiness(),
+    available: isPuterAvailable(),
+    runtime: getPuterRuntimeState(),
+  };
+}

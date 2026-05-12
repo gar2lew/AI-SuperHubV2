@@ -8,6 +8,7 @@ import { textContent } from '@/lib/utils';
 import { assembleContext } from '@/lib/core/context';
 import { recordFailure } from '@/lib/providers/health';
 import { resolveRoute } from '@/lib/routing/fallback-router';
+import { recordPuterFallbackEvent } from '@/lib/providers/puter/runtime';
 
 export function MessageInput() {
   const [input, setInput] = useState('');
@@ -98,6 +99,7 @@ export function MessageInput() {
           const fallbackModelId = route.fallbackChain[1];
           const fallbackRoute = resolveRoute(fallbackModelId, { allowFallback: false });
           if (fallbackRoute) {
+            recordPuterFallbackEvent();
             appendChunk({ type: 'status', content: `fallback: ${fallbackRoute.provider.name}` });
             try {
               const context = assembleContext(activeConversation);
@@ -180,7 +182,7 @@ export function MessageInput() {
 
   return (
     <div
-      className="border-t border-border-subtle bg-bg-secondary px-4 py-3"
+      className="relative border-t border-border-subtle bg-bg-secondary px-3 py-3 sm:px-4"
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
@@ -208,6 +210,7 @@ export function MessageInput() {
               <button
                 onClick={() => setAttachments((prev) => prev.filter((_, idx) => idx !== i))}
                 className="ml-1 text-text-muted hover:text-error"
+                aria-label={`Remove ${att.name}`}
               >
                 ×
               </button>
@@ -219,6 +222,7 @@ export function MessageInput() {
       <div className="max-w-3xl mx-auto">
         <div className="relative flex items-end gap-2 bg-bg-tertiary border border-border-subtle rounded-xl px-3 py-2 focus-within:border-accent/50 focus-within:ring-1 focus-within:ring-accent/20 transition-all">
           <input
+            id="message-attachments"
             ref={fileInputRef}
             type="file"
             multiple
@@ -230,6 +234,7 @@ export function MessageInput() {
             onClick={() => fileInputRef.current?.click()}
             className="shrink-0 p-2 rounded-lg text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors"
             title="Attach file"
+            aria-label="Attach file"
           >
             <Paperclip size={18} />
           </button>
@@ -246,6 +251,7 @@ export function MessageInput() {
             rows={1}
             className="flex-1 bg-transparent text-sm text-text-primary placeholder:text-text-muted resize-none outline-none py-2 max-h-[200px] min-h-[20px]"
             disabled={isStreaming}
+            aria-label="Message input"
           />
 
           {isStreaming ? (
@@ -253,6 +259,7 @@ export function MessageInput() {
               onClick={stopStreaming}
               className="shrink-0 p-2 rounded-lg bg-error/10 text-error hover:bg-error/20 transition-colors"
               title="Stop generation"
+              aria-label="Stop generation"
             >
               <Square size={18} fill="currentColor" />
             </button>
@@ -262,6 +269,7 @@ export function MessageInput() {
               disabled={!input.trim() && attachments.length === 0}
               className="shrink-0 p-2 rounded-lg bg-accent text-white hover:bg-accent-hover disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               title="Send message"
+              aria-label="Send message"
             >
               <Send size={18} />
             </button>

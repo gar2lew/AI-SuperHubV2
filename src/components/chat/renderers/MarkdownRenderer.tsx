@@ -1,3 +1,4 @@
+import { memo, useDeferredValue } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { CodeBlock } from '../CodeBlock';
 
@@ -5,7 +6,9 @@ interface MarkdownRendererProps {
   text: string;
 }
 
-export function MarkdownRenderer({ text }: MarkdownRendererProps) {
+export const MarkdownRenderer = memo(function MarkdownRenderer({ text }: MarkdownRendererProps) {
+  const deferredText = useDeferredValue(text);
+
   return (
     <div className="markdown-content text-sm leading-relaxed">
       <ReactMarkdown
@@ -31,8 +34,8 @@ export function MarkdownRenderer({ text }: MarkdownRendererProps) {
           },
         }}
       >
-        {text}
+        {deferredText}
       </ReactMarkdown>
     </div>
   );
-}
+});

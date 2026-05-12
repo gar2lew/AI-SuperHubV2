@@ -1,25 +1,33 @@
 import type { AIChunk } from '@/types';
+import { normalizePuterResponse, normalizeTTSResponse } from './normalize';
+import { safePuterSTT, safePuterTTS } from './runtime';
 
-/**
- * Placeholder for Puter.js TTS (Text-to-Speech).
- * Future: puter.ai.txt2speech(text, { voice: '...' })
- */
-export async function textToSpeech(_text: string, _options?: { voice?: string }): Promise<Blob> {
-  throw new Error('TTS not yet implemented');
+export interface SpeechOptions {
+  voice?: string;
 }
 
-/**
- * Placeholder for Puter.js STT (Speech-to-Text).
- * Future: puter.ai.speech2txt(audioBlob)
- */
-export async function speechToText(_audio: Blob): Promise<string> {
-  throw new Error('STT not yet implemented');
+export async function textToSpeech(text: string, options: SpeechOptions = {}): Promise<Blob> {
+  const artifact = normalizeTTSResponse(await safePuterTTS(text, options), options.voice);
+  if (artifact.blob) return artifact.blob;
+  const response = await fetch(artifact.url);
+  return response.blob();
 }
 
-/**
- * Streaming STT adapter.
- * Future: yield partial transcriptions as they arrive.
- */
-export async function* streamSpeechToText(_audio: Blob): AsyncGenerator<AIChunk> {
-  throw new Error('Streaming STT not yet implemented');
+export async function textToSpeechArtifact(text: string, options: SpeechOptions = {}) {
+  return normalizeTTSResponse(await safePuterTTS(text, options), options.voice);
+}
+
+export async function speechToText(audio: Blob): Promise<string> {
+  const response = await safePuterSTT(audio);
+  return normalizePuterResponse(response)
+    .filter((part): part is { type: 'text'; text: string } => part.type === 'text')
+    .map((part) => part.text)
+    .join('');
+}
+
+export async function* streamSpeechToText(audio: Blob): AsyncGenerator<AIChunk> {
+  yield { type: 'status', content: 'transcribing' };
+  const text = await speechToText(audio);
+  if (text) yield { type: 'text', content: text };
+  yield { type: 'status', content: 'done' };
 }

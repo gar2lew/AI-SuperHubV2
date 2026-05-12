@@ -42,11 +42,13 @@ export type ContentPart = TextPart | ImagePart | AudioPart | FilePart;
 export interface TextChunk {
   type: 'text';
   content: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface ReasoningChunk {
   type: 'reasoning';
   content: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface ToolCallChunk {
@@ -142,6 +144,8 @@ export interface Conversation {
     startedAt: number;
     providerId: string;
     modelId: string;
+    streamId?: string;
+    lastSequence?: number;
   };
 }
 

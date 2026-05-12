@@ -1,17 +1,39 @@
+import type { ContentPart } from '@/types';
+import { normalizeImageResponse, normalizeVisionResponse } from './normalize';
+import { safePuterChat, safePuterImage } from './runtime';
 
-
-/**
- * Placeholder for Puter.js image generation.
- * Future: puter.ai.img(prompt, { width, height })
- */
-export async function generateImage(_prompt: string, _options?: { width?: number; height?: number }): Promise<string> {
-  throw new Error('Image generation not yet implemented');
+export interface ImageGenerationOptions {
+  model?: string;
+  width?: number;
+  height?: number;
 }
 
-/**
- * Placeholder for Puter.js vision (image understanding).
- * Future: puter.ai.chat([{ role: 'user', content: [{ type: 'image', url: '...' }, { type: 'text', text: '...' }] }])
- */
-export async function visionChat(_messages: unknown[]): Promise<string> {
-  throw new Error('Vision chat not yet implemented');
+export type ImageGenerationEvent =
+  | { type: 'status'; content: string }
+  | { type: 'artifact'; artifact: ReturnType<typeof normalizeImageResponse> };
+
+export async function generateImage(
+  prompt: string,
+  options: ImageGenerationOptions = {}
+): Promise<string> {
+  const artifact = normalizeImageResponse(await safePuterImage(prompt, options), prompt, options.model);
+  return artifact.url;
+}
+
+export async function* streamImageGeneration(
+  prompt: string,
+  options: ImageGenerationOptions = {}
+): AsyncGenerator<ImageGenerationEvent> {
+  yield { type: 'status', content: 'queued' };
+  const response = await safePuterImage(prompt, options);
+  yield { type: 'artifact', artifact: normalizeImageResponse(response, prompt, options.model) };
+  yield { type: 'status', content: 'done' };
+}
+
+export async function visionChat(messages: unknown[]): Promise<string> {
+  const response = await safePuterChat(messages as never, { stream: false });
+  return normalizeVisionResponse(response)
+    .filter((part): part is Extract<ContentPart, { type: 'text' }> => part.type === 'text')
+    .map((part) => part.text)
+    .join('');
 }

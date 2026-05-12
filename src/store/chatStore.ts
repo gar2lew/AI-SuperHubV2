@@ -157,7 +157,20 @@ export const useChatStore = create<ChatState>()(
                         ...c,
                         streaming: {
                           ...c.streaming!,
-                          buffer: [...(c.streaming?.buffer || []), ...chunks],
+                          buffer: [
+                            ...(c.streaming?.buffer || []),
+                            ...chunks.filter((chunk) => {
+                              const sequence = chunk.metadata?.sequence;
+                              return (
+                                typeof sequence !== 'number' ||
+                                sequence > (c.streaming?.lastSequence ?? -1)
+                              );
+                            }),
+                          ],
+                          lastSequence: chunks.reduce((max, chunk) => {
+                            const sequence = chunk.metadata?.sequence;
+                            return typeof sequence === 'number' ? Math.max(max, sequence) : max;
+                          }, c.streaming?.lastSequence ?? -1),
                         },
                       }
                     : c
@@ -185,7 +198,8 @@ export const useChatStore = create<ChatState>()(
               get().finalizeStream(conversationId, streamId);
             },
           },
-          { coalesceText: true, flushIntervalMs: 16, maxBufferSize: 50, timeoutMs: 60000 }
+          { coalesceText: true, flushIntervalMs: 16, maxBufferSize: 50, timeoutMs: 60000 },
+          { streamId, conversationId }
         );
 
         engine.start();
@@ -204,6 +218,8 @@ export const useChatStore = create<ChatState>()(
                     startedAt: Date.now(),
                     providerId,
                     modelId,
+                    streamId,
+                    lastSequence: -1,
                   },
                 }
               : c

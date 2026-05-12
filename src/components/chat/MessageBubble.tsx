@@ -7,14 +7,15 @@ import { formatTimestamp, copyMessageContent } from '@/lib/utils';
 import { MarkdownRenderer } from './renderers/MarkdownRenderer';
 import { VisionMessage } from './message/VisionMessage';
 import { ReasoningRenderer } from './renderers/ReasoningRenderer';
-import { getPuterAISafe } from '@/lib/providers/puter/runtime';
+import { textToSpeechArtifact } from '@/lib/providers/puter/speech';
 
 interface MessageBubbleProps {
   message: Message;
   isStreaming?: boolean;
+  grouped?: boolean;
 }
 
-export function MessageBubble({ message, isStreaming }: MessageBubbleProps) {
+export function MessageBubble({ message, isStreaming, grouped }: MessageBubbleProps) {
   const showTimestamps = useSettingsStore((s) => s.showTimestamps);
   const [copied, setCopied] = useState(false);
   const [ttsState, setTtsState] = useState<'idle' | 'loading' | 'playing' | 'error'>('idle');
@@ -29,13 +30,6 @@ export function MessageBubble({ message, isStreaming }: MessageBubbleProps) {
   };
 
   const handleTTS = async () => {
-    const ai = getPuterAISafe();
-    if (!ai) {
-      setTtsState('error');
-      setTimeout(() => setTtsState('idle'), 2000);
-      return;
-    }
-
     const text = message.content
       .filter((p): p is { type: 'text'; text: string } => p.type === 'text')
       .map((p) => p.text)
@@ -45,14 +39,13 @@ export function MessageBubble({ message, isStreaming }: MessageBubbleProps) {
 
     setTtsState('loading');
     try {
-      const audioBlob = await ai.txt2speech(text);
-      const url = URL.createObjectURL(audioBlob);
-      const audio = new Audio(url);
+      const artifact = await textToSpeechArtifact(text);
+      const audio = new Audio(artifact.url);
       audioRef.current = audio;
 
       audio.onended = () => {
         setTtsState('idle');
-        URL.revokeObjectURL(url);
+        if (artifact.blob) URL.revokeObjectURL(artifact.url);
       };
       audio.onerror = () => {
         setTtsState('error');
@@ -70,14 +63,22 @@ export function MessageBubble({ message, isStreaming }: MessageBubbleProps) {
   const hasReasoning = !!message.metadata?.reasoning;
 
   return (
-    <div className={`group flex gap-4 ${isUser ? 'flex-row-reverse' : 'flex-row'}`}>
+    <article
+      className={`message-bubble group flex gap-3 sm:gap-4 ${isUser ? 'flex-row-reverse' : 'flex-row'} ${
+        isStreaming ? 'is-streaming' : ''
+      }`}
+      aria-live={isStreaming ? 'polite' : undefined}
+    >
       {/* Avatar */}
       <div
         className={`shrink-0 w-8 h-8 rounded-lg flex items-center justify-center ${
+          grouped ? 'opacity-0' : ''
+        } ${
           isUser
             ? 'bg-accent text-white'
             : 'bg-bg-elevated text-accent border border-border-subtle'
         }`}
+        aria-hidden={grouped}
       >
         {isUser ? <User size={16} /> : <Bot size={16} />}
       </div>
@@ -85,14 +86,14 @@ export function MessageBubble({ message, isStreaming }: MessageBubbleProps) {
       {/* Content */}
       <div className={`flex-1 min-w-0 ${isUser ? 'max-w-[80%]' : 'max-w-[85%]'}`}>
         <div
-          className={`relative rounded-2xl px-5 py-3.5 ${
+          className={`message-content relative rounded-2xl px-4 py-3 sm:px-5 sm:py-3.5 ${
             isUser
               ? 'bg-accent text-white ml-auto'
               : 'bg-bg-tertiary border border-border-subtle'
           }`}
         >
           {/* Action buttons */}
-          <div className="absolute top-2 right-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          <div className="message-toolbar absolute top-2 right-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
             {/* TTS button (assistant only) */}
             {isAssistant && (
               <button
@@ -100,6 +101,7 @@ export function MessageBubble({ message, isStreaming }: MessageBubbleProps) {
                 disabled={ttsState === 'loading' || ttsState === 'playing'}
                 className="p-1.5 rounded-md bg-bg-elevated/80 hover:bg-bg-hover text-text-muted hover:text-text-primary transition-all"
                 title={ttsState === 'error' ? 'TTS failed' : ttsState === 'playing' ? 'Playing...' : 'Read aloud'}
+                aria-label={ttsState === 'error' ? 'TTS failed' : ttsState === 'playing' ? 'Playing' : 'Read aloud'}
               >
                 {ttsState === 'loading' && <Loader2 size={14} className="animate-spin" />}
                 {ttsState === 'playing' && <Volume2 size={14} className="text-accent" />}
@@ -112,6 +114,7 @@ export function MessageBubble({ message, isStreaming }: MessageBubbleProps) {
               onClick={handleCopy}
               className="p-1.5 rounded-md bg-bg-elevated/80 hover:bg-bg-hover text-text-muted hover:text-text-primary transition-all"
               title="Copy"
+              aria-label="Copy message"
             >
               {copied ? <Check size={14} /> : <Copy size={14} />}
             </button>
@@ -167,8 +170,9 @@ export function MessageBubble({ message, isStreaming }: MessageBubbleProps) {
           {isStreaming && (
             <motion.span
               animate={{ opacity: [1, 0] }}
-              transition={{ duration: 0.8, repeat: Infinity }}
-              className="inline-block w-2 h-4 bg-accent ml-0.5 align-middle"
+              transition={{ duration: 0.95, repeat: Infinity, ease: 'easeInOut' }}
+              className="stream-cursor inline-block align-middle"
+              aria-hidden="true"
             />
           )}
         </div>
@@ -181,10 +185,10 @@ export function MessageBubble({ message, isStreaming }: MessageBubbleProps) {
             }`}
           >
             <Clock size={10} />
-            <span>{formatTimestamp(message.createdAt)}</span>
+            <time dateTime={new Date(message.createdAt).toISOString()}>{formatTimestamp(message.createdAt)}</time>
           </div>
         )}
       </div>
-    </div>
+    </article>
   );
 }

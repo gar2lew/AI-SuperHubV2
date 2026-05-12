@@ -1,12 +1,7 @@
 import type { Message, AIChunk } from '@/types';
 import { findLast } from '@/lib/utils';
-import { normalizeChunk } from './normalize';
-import { getPuterAI, isPuterAvailable, getPuterReadiness } from './runtime';
-import { formatMessages, extractSystemPrompt } from './normalize';
-
-// ============================================================
-// MOCK STREAMING (fallback when Puter is unavailable)
-// ============================================================
+import { normalizePuterChunk, normalizePuterResponse } from './normalize';
+import { safePuterChat, setActivePuterStream } from './runtime';
 
 export async function mockChat(messages: Message[]): Promise<string> {
   const lastUser = findLast(messages, (m: Message) => m.role === 'user');
@@ -24,7 +19,7 @@ export async function mockChat(messages: Message[]): Promise<string> {
   if (prompt.includes('hello') || prompt.includes('hi')) {
     return "Hello! I'm your AI assistant powered by Puter.js. What would you like to work on today?";
   }
-  return "I understand your message. In production, this connects to Puter.js for real AI responses.";
+  return 'I understand your message. In production, this connects to Puter.js for real AI responses.';
 }
 
 export async function* mockStream(
@@ -40,104 +35,57 @@ export async function* mockStream(
       return;
     }
     await delay(30 + Math.random() * 50);
-    yield normalizeChunk({ text: (i > 0 ? ' ' : '') + tokens[i] });
+    yield normalizePuterChunk({ text: (i > 0 ? ' ' : '') + tokens[i] }, i);
   }
 
   yield { type: 'status', content: 'done' };
 }
 
-// ============================================================
-// REAL PUTER.JS STREAMING
-// ============================================================
-
-/**
- * Real Puter.js streaming adapter.
- * Uses puter.ai.chat() with stream: true.
- * Normalizes all output to AIChunk.
- */
 export async function* puterStream(
   messages: Message[],
   abortSignal?: AbortSignal,
   modelId?: string
 ): AsyncGenerator<AIChunk> {
-  // Check Puter availability
-  if (!isPuterAvailable()) {
-    console.warn('[PuterProvider] Puter.js not available, falling back to mock');
-    yield* mockStream(messages, abortSignal);
-    return;
-  }
-
-  const ai = getPuterAI();
-  const puterMessages = formatMessages(messages);
-  const system = extractSystemPrompt(messages);
-
-  // Determine model: use provided or default
-  const model = modelId || 'gpt-4o';
+  const streamId = `puter-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  setActivePuterStream(streamId);
 
   try {
-    const stream = await ai.chat(puterMessages, {
-      model,
+    const stream = await safePuterChat(messages, {
+      model: modelId || 'gpt-4o',
       stream: true,
-      ...(system ? { system } : {}),
     });
 
-    for await (const chunk of stream as AsyncIterable<{ text?: string; done?: boolean }>) {
+    let sequence = 0;
+    for await (const chunk of stream as AsyncIterable<unknown>) {
       if (abortSignal?.aborted) {
-        yield { type: 'status', content: 'aborted' };
+        yield { type: 'status', content: 'aborted', metadata: { streamId, sequence } };
         return;
       }
 
-      if (chunk.done) {
-        yield { type: 'status', content: 'done' };
-        return;
-      }
+      const normalized = normalizePuterChunk(chunk, sequence++);
+      yield normalized;
 
-      if (chunk.text) {
-        yield normalizeChunk({ text: chunk.text });
+      if (normalized.type === 'status' && normalized.content === 'done') {
+        return;
       }
     }
 
-    yield { type: 'status', content: 'done' };
-  } catch (err) {
-    const error = err as Error;
-    console.error('[PuterProvider] Stream error:', error);
-    yield { type: 'status', content: `error: ${error.message}` };
-    throw error;
+    yield { type: 'status', content: 'done', metadata: { streamId, sequence } };
+  } finally {
+    setActivePuterStream(null);
   }
 }
 
-/**
- * Non-streaming chat for Puter.js.
- */
 export async function puterChat(messages: Message[], modelId?: string): Promise<string> {
-  if (!isPuterAvailable()) {
-    console.warn('[PuterProvider] Puter.js not available, falling back to mock');
-    return mockChat(messages);
-  }
-
-  const ai = getPuterAI();
-  const puterMessages = formatMessages(messages);
-  const system = extractSystemPrompt(messages);
-  const model = modelId || 'gpt-4o';
-
-  const response = await ai.chat(puterMessages, {
-    model,
-    ...(system ? { system } : {}),
+  const response = await safePuterChat(messages, {
+    model: modelId || 'gpt-4o',
+    stream: false,
   });
 
-  // Puter returns the full text directly for non-streaming
-  return typeof response === 'string' ? response : String(response);
-}
-
-/** Get provider readiness for diagnostics. */
-export function getPuterProviderStatus(): {
-  readiness: ReturnType<typeof getPuterReadiness>;
-  available: boolean;
-} {
-  return {
-    readiness: getPuterReadiness(),
-    available: isPuterAvailable(),
-  };
+  return normalizePuterResponse(response)
+    .filter((part): part is { type: 'text'; text: string } => part.type === 'text')
+    .map((part) => part.text)
+    .join('');
 }
 
 function delay(ms: number): Promise<void> {

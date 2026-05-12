@@ -3,6 +3,8 @@ import { persist } from 'zustand/middleware';
 import type { Settings, ProviderId } from '@/types';
 import { DEFAULT_PRESET_ID, resolvePresetToModel } from '@/lib/models/presets';
 
+export type WorkspaceId = 'chat' | 'coding' | 'image' | 'voice' | 'terminal';
+
 interface SettingsState extends Settings {
   selectedProvider: ProviderId;
   selectedModel: string;
@@ -10,6 +12,7 @@ interface SettingsState extends Settings {
   settingsOpen: boolean;
   commandPaletteOpen: boolean;
   searchOpen: boolean;
+  activeWorkspace: WorkspaceId;
 
   // Actions
   setTheme: (theme: Settings['theme']) => void;
@@ -32,6 +35,7 @@ interface SettingsState extends Settings {
   closeCommandPalette: () => void;
   openSearch: () => void;
   closeSearch: () => void;
+  setActiveWorkspace: (workspace: WorkspaceId) => void;
 }
 
 const defaultSettings: Settings = {
@@ -62,6 +66,7 @@ export const useSettingsStore = create<SettingsState>()(
       settingsOpen: false,
       commandPaletteOpen: false,
       searchOpen: false,
+      activeWorkspace: 'chat',
 
       setTheme: (theme) => set({ theme }),
 
@@ -115,6 +120,7 @@ export const useSettingsStore = create<SettingsState>()(
       closeCommandPalette: () => set({ commandPaletteOpen: false }),
       openSearch: () => set({ searchOpen: true }),
       closeSearch: () => set({ searchOpen: false }),
+      setActiveWorkspace: (activeWorkspace) => set({ activeWorkspace }),
     }),
     {
       name: 'ai-workstation-settings',
@@ -130,6 +136,7 @@ export const useSettingsStore = create<SettingsState>()(
         selectedProvider: state.selectedProvider,
         selectedModel: state.selectedModel,
         selectedPreset: state.selectedPreset,
+        activeWorkspace: state.activeWorkspace,
       }),
     }
   )

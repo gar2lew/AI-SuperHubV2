@@ -42,12 +42,13 @@ export function RightPanel() {
   const [activeTab, setActiveTab] = useState<RightPanelTab>('files');
 
   return (
-    <div className="flex flex-col h-full w-80 bg-bg-secondary">
+    <div className="flex flex-col h-full w-full sm:w-80 bg-bg-secondary">
       <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle">
         <h3 className="text-sm font-semibold text-text-primary">Utilities</h3>
         <button
           onClick={toggleRightPanel}
           className="p-1 rounded hover:bg-bg-hover text-text-muted hover:text-text-primary transition-colors"
+          aria-label="Close utilities panel"
         >
           <X size={16} />
         </button>
@@ -58,6 +59,8 @@ export function RightPanel() {
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
+            aria-label={`${tab.label} tab`}
+            aria-selected={activeTab === tab.id}
             className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-medium transition-colors ${
               activeTab === tab.id
                 ? 'text-accent border-b-2 border-accent'
@@ -154,14 +157,22 @@ function DiagnosticsTab() {
   const currentStreamId = useChatStore((s) => s.getCurrentStreamId());
   const healthRecords = getAllHealth();
   const puterStatus = getPuterProviderStatus();
+  const diagnostics = useChatStore((s) => s.streamEngine?.getDiagnostics());
 
   const streaming = activeConversation?.streaming;
   const durationMs = streaming ? Date.now() - streaming.startedAt : 0;
   const chunkCount = streaming?.buffer.length || 0;
   const chunkRate = durationMs > 0 ? Math.round((chunkCount / durationMs) * 1000) : 0;
+  const fps = diagnostics?.throughputPerSecond ? Math.min(60, diagnostics.throughputPerSecond) : 0;
+  const streamHealth = !streaming ? 'idle' : chunkRate > 0 ? 'streaming' : 'warming';
 
   return (
     <div className="space-y-4">
+      <div className="diagnostic-summary">
+        <MetricBadge label="Runtime" value={puterStatus.readiness} tone={puterStatus.available ? 'success' : 'warning'} />
+        <MetricBadge label="Stream" value={streamHealth} tone={streaming ? 'success' : 'neutral'} />
+        <MetricBadge label="FPS" value={String(fps)} tone={fps > 0 ? 'success' : 'neutral'} />
+      </div>
       {/* Puter Runtime Status */}
       <div className="p-3 rounded-lg bg-bg-tertiary border border-border-subtle">
         <h4 className="text-xs font-semibold text-text-primary uppercase tracking-wider mb-2 flex items-center gap-1.5">
@@ -178,6 +189,26 @@ function DiagnosticsTab() {
           <div className="flex justify-between">
             <span className="text-text-muted">Readiness</span>
             <span className="text-text-secondary">{puterStatus.readiness}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-text-muted">Auth</span>
+            <span className="text-text-secondary">
+              {puterStatus.runtime.authenticated ? 'Signed in' : 'Unknown'}
+            </span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-text-muted">Timeouts</span>
+            <span className="text-text-secondary">{puterStatus.runtime.timeoutEvents}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-text-muted">Fallbacks</span>
+            <span className="text-text-secondary">{puterStatus.runtime.fallbackEvents}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-text-muted">Latency</span>
+            <span className="text-text-secondary">
+              {puterStatus.runtime.providerLatencyMs ?? 0}ms
+            </span>
           </div>
         </div>
       </div>
@@ -217,9 +248,33 @@ function DiagnosticsTab() {
                 {chunkRate}/s
               </span>
             </div>
+            <div className="flex justify-between">
+              <span className="text-text-muted">Stream FPS</span>
+              <span className="text-text-secondary">{fps}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-text-muted">Pending</span>
+            <span className="text-text-secondary">{diagnostics?.pendingCount ?? 0}</span>
+            </div>
+            <div className="sparkline" aria-hidden="true">
+              {Array.from({ length: 18 }, (_, index) => (
+                <span key={index} style={{ height: `${18 + ((index + chunkRate) * 9) % 62}%` }} />
+              ))}
+            </div>
           </div>
         </div>
       )}
+
+      <div className="p-3 rounded-lg bg-bg-tertiary border border-border-subtle">
+        <h4 className="text-xs font-semibold text-text-primary uppercase tracking-wider mb-2">
+          Memory
+        </h4>
+        <p className="text-xs text-text-muted">
+          {activeConversation && activeConversation.messages.length > 80
+            ? 'Large conversation. Consider starting a fresh thread.'
+            : 'No memory pressure warning.'}
+        </p>
+      </div>
 
       {/* Provider Health */}
       <div className="p-3 rounded-lg bg-bg-tertiary border border-border-subtle">
@@ -294,6 +349,23 @@ function DiagnosticsTab() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function MetricBadge({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone: 'success' | 'warning' | 'neutral';
+}) {
+  return (
+    <div className={`metric-badge ${tone}`}>
+      <span>{label}</span>
+      <strong>{value}</strong>
     </div>
   );
 }

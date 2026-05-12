@@ -72,8 +72,11 @@ export function extractFiles(content: ContentPart[]): Extract<ContentPart, { typ
 
 /** Build a display title from message content */
 export function messageToTitle(content: ContentPart[]): string {
-  const text = extractText(content);
-  return truncate(text, 50) || 'New Conversation';
+  const text = extractText(content)
+    .replace(/[`*_>#-]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return truncate(text, 54) || 'New Conversation';
 }
 
 // ============================================================

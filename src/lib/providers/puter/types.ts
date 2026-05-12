@@ -3,7 +3,7 @@ import type { Message, AIChunk } from '@/types';
 /** Puter.js specific message format */
 export interface PuterMessage {
   role: string;
-  content: string;
+  content: string | Array<Record<string, unknown>>;
 }
 
 /** Puter.js streaming response chunk */
@@ -31,9 +31,11 @@ export function normalizePuterChunk(chunk: PuterStreamChunk): AIChunk {
 export function toPuterMessages(messages: Message[]): PuterMessage[] {
   return messages.map((m) => ({
     role: m.role,
-    content: m.content
-      .filter((p): p is { type: 'text'; text: string } => p.type === 'text')
-      .map((p) => p.text)
-      .join(''),
+    content: m.content.map((part) => {
+      if (part.type === 'text') return { type: 'text', text: part.text };
+      if (part.type === 'image') return { type: 'image', url: part.url, mimeType: part.mimeType };
+      if (part.type === 'audio') return { type: 'audio', url: part.url, mimeType: part.mimeType };
+      return { type: 'file', url: part.url, name: part.name, mimeType: part.mimeType };
+    }),
   }));
 }
