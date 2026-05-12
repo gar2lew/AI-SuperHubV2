@@ -1,0 +1,78 @@
+import { motion } from 'framer-motion';
+import { Sparkles, Zap, Code, FileImage, Mic, Wrench } from 'lucide-react';
+import { useChatStore } from '@/store/chatStore';
+import { textContent } from '@/lib/utils';
+
+const suggestions = [
+  { icon: Code, text: 'Write a TypeScript function to parse JSON safely', color: 'text-accent' },
+  { icon: Zap, text: 'Explain how React hooks work under the hood', color: 'text-warning' },
+  { icon: FileImage, text: 'Describe what you see in an uploaded image', color: 'text-success' },
+  { icon: Mic, text: 'Transcribe and summarize this audio clip', color: 'text-error' },
+  { icon: Wrench, text: 'Debug this error: Cannot read property of undefined', color: 'text-accent' },
+];
+
+export function EmptyState() {
+  const createConversation = useChatStore((s) => s.createConversation);
+
+  const handleSuggestion = (text: string) => {
+    const id = createConversation();
+    setTimeout(() => {
+      const addMessage = useChatStore.getState().addMessage;
+      addMessage(id, { role: 'user', content: textContent(text) });
+    }, 100);
+  };
+
+  return (
+    <div className="flex flex-col items-center justify-center h-full px-6">
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5 }}
+        className="text-center max-w-lg"
+      >
+        <div className="w-16 h-16 mx-auto mb-6 rounded-2xl bg-accent/10 border border-accent/20 flex items-center justify-center">
+          <Sparkles size={28} className="text-accent" />
+        </div>
+
+        <h1 className="text-2xl font-semibold text-text-primary mb-2">AI Workstation</h1>
+        <p className="text-text-secondary mb-8">
+          Your personal AI experimentation platform. Multi-provider, extensible, and built for the future.
+        </p>
+
+        <div className="space-y-2">
+          <p className="text-xs font-medium text-text-muted uppercase tracking-wider mb-3">
+            Try asking
+          </p>
+          {suggestions.map((suggestion, i) => (
+            <motion.button
+              key={i}
+              initial={{ opacity: 0, x: -10 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ delay: 0.1 * i }}
+              onClick={() => handleSuggestion(suggestion.text)}
+              className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-bg-tertiary border border-border-subtle hover:border-border-default hover:bg-bg-hover transition-all text-left group"
+            >
+              <suggestion.icon size={18} className={`${suggestion.color} shrink-0`} />
+              <span className="text-sm text-text-secondary group-hover:text-text-primary transition-colors">
+                {suggestion.text}
+              </span>
+            </motion.button>
+          ))}
+        </div>
+
+        <div className="mt-8 flex items-center justify-center gap-4 text-xs text-text-muted">
+          <span className="flex items-center gap-1">
+            <kbd className="px-1.5 py-0.5 rounded bg-bg-tertiary border border-border-subtle font-mono text-[10px]">Ctrl</kbd>
+            +
+            <kbd className="px-1.5 py-0.5 rounded bg-bg-tertiary border border-border-subtle font-mono text-[10px]">K</kbd>
+            <span className="ml-1">Command Palette</span>
+          </span>
+          <span className="flex items-center gap-1">
+            <kbd className="px-1.5 py-0.5 rounded bg-bg-tertiary border border-border-subtle font-mono text-[10px]">/</kbd>
+            <span className="ml-1">Search</span>
+          </span>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
