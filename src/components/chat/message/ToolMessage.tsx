@@ -14,7 +14,7 @@ export function ToolMessage({ toolId, status, result }: ToolMessageProps) {
   };
 
   return (
-    <div className="my-2 p-3 rounded-lg bg-bg-tertiary border border-border-subtle">
+    <div className="content-card my-2 p-3">
       <div className="flex items-center gap-2 text-xs text-text-muted mb-1">
         {statusIcon[status]}
         <span className="font-mono">{toolId}</span>

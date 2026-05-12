@@ -9,7 +9,7 @@ export function ReasoningRenderer({ reasoning }: ReasoningRendererProps) {
   const [expanded, setExpanded] = useState(false);
 
   return (
-    <div className="my-2 rounded-lg bg-bg-elevated/50 border border-border-subtle overflow-hidden">
+    <div className="content-card my-2 overflow-hidden">
       <button
         onClick={() => setExpanded(!expanded)}
         className="w-full flex items-center gap-2 px-3 py-2 text-xs text-text-muted hover:text-text-secondary transition-colors"

@@ -71,13 +71,9 @@ export function MessageBubble({ message, isStreaming, grouped }: MessageBubblePr
     >
       {/* Avatar */}
       <div
-        className={`shrink-0 w-8 h-8 rounded-lg flex items-center justify-center ${
+        className={`avatar-token shrink-0 w-8 h-8 flex items-center justify-center ${
           grouped ? 'opacity-0' : ''
-        } ${
-          isUser
-            ? 'bg-accent text-white'
-            : 'bg-bg-elevated text-accent border border-border-subtle'
-        }`}
+        } ${isUser ? 'is-user text-white' : 'is-assistant text-accent'}`}
         aria-hidden={grouped}
       >
         {isUser ? <User size={16} /> : <Bot size={16} />}
@@ -88,8 +84,8 @@ export function MessageBubble({ message, isStreaming, grouped }: MessageBubblePr
         <div
           className={`message-content relative rounded-2xl px-4 py-3 sm:px-5 sm:py-3.5 ${
             isUser
-              ? 'bg-accent text-white ml-auto'
-              : 'bg-bg-tertiary border border-border-subtle'
+              ? 'user-message ml-auto'
+              : 'assistant-message'
           }`}
         >
           {/* Action buttons */}
@@ -99,7 +95,7 @@ export function MessageBubble({ message, isStreaming, grouped }: MessageBubblePr
               <button
                 onClick={handleTTS}
                 disabled={ttsState === 'loading' || ttsState === 'playing'}
-                className="p-1.5 rounded-md bg-bg-elevated/80 hover:bg-bg-hover text-text-muted hover:text-text-primary transition-all"
+                className="message-action p-1.5 text-text-muted hover:text-text-primary"
                 title={ttsState === 'error' ? 'TTS failed' : ttsState === 'playing' ? 'Playing...' : 'Read aloud'}
                 aria-label={ttsState === 'error' ? 'TTS failed' : ttsState === 'playing' ? 'Playing' : 'Read aloud'}
               >
@@ -112,7 +108,7 @@ export function MessageBubble({ message, isStreaming, grouped }: MessageBubblePr
             {/* Copy button */}
             <button
               onClick={handleCopy}
-              className="p-1.5 rounded-md bg-bg-elevated/80 hover:bg-bg-hover text-text-muted hover:text-text-primary transition-all"
+              className="message-action p-1.5 text-text-muted hover:text-text-primary"
               title="Copy"
               aria-label="Copy message"
             >
@@ -139,7 +135,7 @@ export function MessageBubble({ message, isStreaming, grouped }: MessageBubblePr
                 return (
                   <div
                     key={i}
-                    className="flex items-center gap-2 p-2 rounded bg-bg-elevated text-xs text-text-secondary"
+                    className="content-chip flex items-center gap-2 p-2 text-xs text-text-secondary"
                   >
                     <span className="font-mono">📎</span>
                     <span>{part.name || 'File'}</span>
@@ -150,7 +146,7 @@ export function MessageBubble({ message, isStreaming, grouped }: MessageBubblePr
                 return (
                   <div
                     key={i}
-                    className="flex items-center gap-2 p-2 rounded bg-bg-elevated text-xs text-text-secondary"
+                    className="content-chip flex items-center gap-2 p-2 text-xs text-text-secondary"
                   >
                     <span className="font-mono">🔊</span>
                     <span>Audio</span>

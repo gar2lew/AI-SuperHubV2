@@ -9,16 +9,16 @@ interface ArtifactRendererProps {
 
 export function ArtifactRenderer({ name, type, content, url }: ArtifactRendererProps) {
   return (
-    <div className="my-2 p-3 rounded-lg bg-bg-elevated border border-border-subtle">
+    <div className="content-card my-2 p-3">
       <div className="flex items-center gap-2 mb-2">
         <Box size={16} className="text-accent" />
         <span className="text-sm font-medium text-text-primary">{name}</span>
-        <span className="text-[10px] px-1.5 py-0.5 rounded bg-bg-tertiary text-text-muted uppercase">
+        <span className="kbd-token text-[10px] px-1.5 py-0.5 text-text-muted uppercase">
           {type}
         </span>
       </div>
       {content && (
-        <pre className="text-xs text-text-secondary font-mono bg-bg-tertiary rounded p-2 max-h-40 overflow-auto">
+        <pre className="code-inline-preview text-xs text-text-secondary font-mono p-2 max-h-40 overflow-auto">
           {content.slice(0, 500)}
           {content.length > 500 && '...'}
         </pre>

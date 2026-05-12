@@ -53,7 +53,7 @@ export function MainLayout() {
             animate={{ width: isTablet ? 280 : 320, opacity: 1 }}
             exit={{ width: 0, opacity: 0 }}
             transition={{ duration: 0.2, ease: 'easeInOut' }}
-            className="utility-panel-shell border-l border-border-subtle overflow-hidden"
+            className="utility-panel-shell border-l overflow-hidden"
           >
             <RightPanel />
           </motion.div>
@@ -66,7 +66,7 @@ export function MainLayout() {
             initial={{ opacity: 0, y: 24 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 24 }}
-            className="utility-panel-shell fixed inset-x-0 bottom-14 z-40 max-h-[70vh] overflow-hidden border-t border-border-subtle bg-bg-secondary shadow-2xl"
+            className="utility-panel-shell fixed inset-x-0 bottom-14 z-40 max-h-[70vh] overflow-hidden border-t"
           >
             <RightPanel />
           </motion.div>

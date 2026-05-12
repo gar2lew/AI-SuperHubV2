@@ -28,9 +28,9 @@ export function EmptyState() {
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5 }}
-        className="text-center max-w-lg"
+        className="empty-state-panel text-center max-w-lg"
       >
-        <div className="w-16 h-16 mx-auto mb-6 rounded-2xl bg-accent/10 border border-accent/20 flex items-center justify-center">
+        <div className="hero-orb w-16 h-16 mx-auto mb-6 flex items-center justify-center">
           <Sparkles size={28} className="text-accent" />
         </div>
 
@@ -50,7 +50,7 @@ export function EmptyState() {
               animate={{ opacity: 1, x: 0 }}
               transition={{ delay: 0.1 * i }}
               onClick={() => handleSuggestion(suggestion.text)}
-              className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-bg-tertiary border border-border-subtle hover:border-border-default hover:bg-bg-hover transition-all text-left group"
+              className="suggestion-card w-full flex items-center gap-3 px-4 py-3 text-left group"
             >
               <suggestion.icon size={18} className={`${suggestion.color} shrink-0`} />
               <span className="text-sm text-text-secondary group-hover:text-text-primary transition-colors">
@@ -62,13 +62,13 @@ export function EmptyState() {
 
         <div className="mt-8 flex items-center justify-center gap-4 text-xs text-text-muted">
           <span className="flex items-center gap-1">
-            <kbd className="px-1.5 py-0.5 rounded bg-bg-tertiary border border-border-subtle font-mono text-[10px]">Ctrl</kbd>
+            <kbd className="kbd-token px-1.5 py-0.5 font-mono text-[10px]">Ctrl</kbd>
             +
-            <kbd className="px-1.5 py-0.5 rounded bg-bg-tertiary border border-border-subtle font-mono text-[10px]">K</kbd>
+            <kbd className="kbd-token px-1.5 py-0.5 font-mono text-[10px]">K</kbd>
             <span className="ml-1">Command Palette</span>
           </span>
           <span className="flex items-center gap-1">
-            <kbd className="px-1.5 py-0.5 rounded bg-bg-tertiary border border-border-subtle font-mono text-[10px]">/</kbd>
+            <kbd className="kbd-token px-1.5 py-0.5 font-mono text-[10px]">/</kbd>
             <span className="ml-1">Search</span>
           </span>
         </div>

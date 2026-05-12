@@ -35,7 +35,7 @@ export function SettingsModal({ open }: SettingsModalProps) {
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          className="modal-backdrop fixed inset-0 z-50 flex items-center justify-center"
           onClick={closeSettings}
         >
           <motion.div
@@ -43,14 +43,14 @@ export function SettingsModal({ open }: SettingsModalProps) {
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 10 }}
             transition={{ duration: 0.2 }}
-            className="w-full max-w-lg bg-bg-secondary border border-border-subtle rounded-2xl shadow-2xl overflow-hidden"
+            className="modal-panel w-full max-w-lg overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between px-6 py-4 border-b border-border-subtle">
+            <div className="panel-header flex items-center justify-between px-6 py-4">
               <h2 className="text-lg font-semibold text-text-primary">Settings</h2>
               <button
                 onClick={closeSettings}
-                className="p-1.5 rounded-lg hover:bg-bg-hover text-text-muted hover:text-text-primary transition-colors"
+                className="icon-action p-1.5 text-text-muted hover:text-text-primary"
               >
                 <X size={18} />
               </button>
@@ -69,7 +69,7 @@ export function SettingsModal({ open }: SettingsModalProps) {
                     <select
                       value={selectedPreset}
                       onChange={(e) => setSelectedPreset(e.target.value)}
-                      className="w-full px-3 py-2 rounded-lg bg-bg-tertiary border border-border-subtle text-sm text-text-primary outline-none focus:border-accent"
+                      className="control-surface w-full px-3 py-2 text-sm text-text-primary outline-none"
                     >
                       {MODEL_PRESETS.map((p) => (
                         <option key={p.id} value={p.id}>
@@ -83,7 +83,7 @@ export function SettingsModal({ open }: SettingsModalProps) {
                     <select
                       value={selectedModel}
                       onChange={(e) => setSelectedModel(e.target.value)}
-                      className="w-full px-3 py-2 rounded-lg bg-bg-tertiary border border-border-subtle text-sm text-text-primary outline-none focus:border-accent"
+                      className="control-surface w-full px-3 py-2 text-sm text-text-primary outline-none"
                     >
                       {modelRegistry.getAll().map((m) => (
                         <option key={m.id} value={m.id}>
@@ -112,8 +112,8 @@ export function SettingsModal({ open }: SettingsModalProps) {
                       onClick={() => setTheme(t.id)}
                       className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors ${
                         theme === t.id
-                          ? 'bg-accent text-white'
-                          : 'bg-bg-tertiary text-text-secondary hover:bg-bg-hover'
+                          ? 'primary-action text-white'
+                          : 'control-surface text-text-secondary'
                       }`}
                     >
                       <t.icon size={14} />
@@ -151,7 +151,7 @@ export function SettingsModal({ open }: SettingsModalProps) {
                   {providers.map((provider) => (
                     <div
                       key={provider.id}
-                      className="flex items-center gap-2 px-3 py-2 rounded-lg bg-bg-tertiary border border-border-subtle"
+                      className="control-surface flex items-center gap-2 px-3 py-2"
                     >
                       <span className="text-sm text-text-secondary w-24">{provider.name}</span>
                       <input
@@ -217,7 +217,7 @@ function Toggle({
       <button
         onClick={() => onChange(!checked)}
         className={`relative w-10 h-5 rounded-full transition-colors ${
-          checked ? 'bg-accent' : 'bg-bg-elevated'
+          checked ? 'toggle-track is-on' : 'toggle-track'
         }`}
       >
         <span

@@ -36,9 +36,9 @@ export function CodeBlock({ language, children }: CodeBlockProps) {
   );
 
   return (
-    <div className="code-block my-3 rounded-lg overflow-hidden border border-border-subtle bg-code-bg">
+    <div className="code-block code-panel my-3 overflow-hidden">
       {/* Header */}
-      <div className="flex items-center justify-between px-3 py-2 bg-bg-elevated/50 border-b border-border-subtle">
+      <div className="code-toolbar flex items-center justify-between px-3 py-2">
         <div className="flex min-w-0 items-center gap-2">
           <span className="text-xs font-mono text-text-muted uppercase">
             {displayLanguage}

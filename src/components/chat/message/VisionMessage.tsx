@@ -11,7 +11,7 @@ export function VisionMessage({ url, file, alt }: VisionMessageProps) {
 
   if (!src) {
     return (
-      <div className="my-2 p-4 rounded-lg bg-bg-tertiary border border-border-subtle flex items-center gap-2 text-text-muted">
+      <div className="content-card my-2 p-4 flex items-center gap-2 text-text-muted">
         <ImageIcon size={18} />
         <span className="text-sm">Image unavailable</span>
       </div>
@@ -23,7 +23,7 @@ export function VisionMessage({ url, file, alt }: VisionMessageProps) {
       <img
         src={src}
         alt={alt || 'Uploaded image'}
-        className="max-w-full max-h-80 rounded-lg border border-border-subtle object-contain"
+        className="vision-artifact max-w-full max-h-80 object-contain"
         loading="lazy"
       />
     </div>

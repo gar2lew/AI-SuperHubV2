@@ -14,7 +14,7 @@ export function WorkspaceNav() {
   const setActiveWorkspace = useSettingsStore((s) => s.setActiveWorkspace);
 
   return (
-    <nav className="workspace-nav border-b border-border-subtle bg-bg-secondary/95 px-3 py-2" aria-label="Workspace navigation">
+    <nav className="workspace-nav px-3 py-2" aria-label="Workspace navigation">
       <div className="mx-auto flex max-w-5xl items-center gap-1 overflow-x-auto">
         {WORKSPACES.map((workspace) => (
           <button
@@ -22,10 +22,10 @@ export function WorkspaceNav() {
             onClick={() => setActiveWorkspace(workspace.id)}
             aria-current={activeWorkspace === workspace.id ? 'page' : undefined}
             aria-label={`${workspace.label} workspace`}
-            className={`flex min-h-10 shrink-0 items-center gap-2 rounded-md px-3 text-sm font-medium transition-colors ${
+            className={`workspace-tab flex min-h-10 shrink-0 items-center gap-2 px-3 text-sm font-medium ${
               activeWorkspace === workspace.id
-                ? 'bg-accent text-white'
-                : 'text-text-muted hover:bg-bg-hover hover:text-text-primary'
+                ? 'is-active text-white'
+                : 'text-text-muted'
             }`}
           >
             <workspace.icon size={16} />

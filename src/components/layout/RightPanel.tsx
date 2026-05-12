@@ -42,29 +42,29 @@ export function RightPanel() {
   const [activeTab, setActiveTab] = useState<RightPanelTab>('files');
 
   return (
-    <div className="flex flex-col h-full w-full sm:w-80 bg-bg-secondary">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle">
+    <div className="utility-panel flex flex-col h-full w-full sm:w-80">
+      <div className="panel-header flex items-center justify-between px-4 py-3">
         <h3 className="text-sm font-semibold text-text-primary">Utilities</h3>
         <button
           onClick={toggleRightPanel}
-          className="p-1 rounded hover:bg-bg-hover text-text-muted hover:text-text-primary transition-colors"
+          className="icon-action p-1 text-text-muted hover:text-text-primary"
           aria-label="Close utilities panel"
         >
           <X size={16} />
         </button>
       </div>
 
-      <div className="flex border-b border-border-subtle">
+      <div className="panel-tabs flex">
         {TABS.map((tab) => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
             aria-label={`${tab.label} tab`}
             aria-selected={activeTab === tab.id}
-            className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-medium transition-colors ${
+            className={`panel-tab flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-medium ${
               activeTab === tab.id
-                ? 'text-accent border-b-2 border-accent'
-                : 'text-text-muted hover:text-text-secondary'
+                ? 'is-active text-accent'
+                : 'text-text-muted'
             }`}
           >
             <tab.icon size={14} />
@@ -87,21 +87,21 @@ export function RightPanel() {
 function FilesTab() {
   return (
     <div className="space-y-3">
-      <div className="flex items-center gap-3 p-3 rounded-lg bg-bg-tertiary border border-border-subtle">
+      <div className="telemetry-card flex items-center gap-3 p-3">
         <Image size={18} className="text-accent" />
         <div>
           <p className="text-sm text-text-primary">image.png</p>
           <p className="text-xs text-text-muted">2.4 MB · Image</p>
         </div>
       </div>
-      <div className="flex items-center gap-3 p-3 rounded-lg bg-bg-tertiary border border-border-subtle">
+      <div className="telemetry-card flex items-center gap-3 p-3">
         <FileCode size={18} className="text-warning" />
         <div>
           <p className="text-sm text-text-primary">script.ts</p>
           <p className="text-xs text-text-muted">12 KB · TypeScript</p>
         </div>
       </div>
-      <div className="flex items-center gap-3 p-3 rounded-lg bg-bg-tertiary border border-border-subtle">
+      <div className="telemetry-card flex items-center gap-3 p-3">
         <FileText size={18} className="text-success" />
         <div>
           <p className="text-sm text-text-primary">notes.md</p>
@@ -131,7 +131,7 @@ function ToolsTab() {
         <motion.div
           key={tool.id}
           whileHover={{ scale: 1.01 }}
-          className="p-3 rounded-lg bg-bg-tertiary border border-border-subtle hover:border-border-default transition-colors cursor-pointer"
+          className="telemetry-card p-3 cursor-pointer"
         >
           <p className="text-sm font-medium text-text-primary">{tool.name}</p>
           <p className="text-xs text-text-muted mt-0.5">{tool.description}</p>
@@ -174,7 +174,7 @@ function DiagnosticsTab() {
         <MetricBadge label="FPS" value={String(fps)} tone={fps > 0 ? 'success' : 'neutral'} />
       </div>
       {/* Puter Runtime Status */}
-      <div className="p-3 rounded-lg bg-bg-tertiary border border-border-subtle">
+      <div className="telemetry-card p-3">
         <h4 className="text-xs font-semibold text-text-primary uppercase tracking-wider mb-2 flex items-center gap-1.5">
           <ShieldAlert size={12} className="text-accent" />
           Puter Runtime
@@ -215,7 +215,7 @@ function DiagnosticsTab() {
 
       {/* Active Stream */}
       {streaming && (
-        <div className="p-3 rounded-lg bg-bg-tertiary border border-border-subtle">
+        <div className="telemetry-card p-3">
           <h4 className="text-xs font-semibold text-text-primary uppercase tracking-wider mb-2 flex items-center gap-1.5">
             <Zap size={12} className="text-accent" />
             Active Stream
@@ -265,7 +265,7 @@ function DiagnosticsTab() {
         </div>
       )}
 
-      <div className="p-3 rounded-lg bg-bg-tertiary border border-border-subtle">
+      <div className="telemetry-card p-3">
         <h4 className="text-xs font-semibold text-text-primary uppercase tracking-wider mb-2">
           Memory
         </h4>
@@ -277,7 +277,7 @@ function DiagnosticsTab() {
       </div>
 
       {/* Provider Health */}
-      <div className="p-3 rounded-lg bg-bg-tertiary border border-border-subtle">
+      <div className="telemetry-card p-3">
         <h4 className="text-xs font-semibold text-text-primary uppercase tracking-wider mb-2 flex items-center gap-1.5">
           <Activity size={12} className="text-success" />
           Provider Health
@@ -328,7 +328,7 @@ function DiagnosticsTab() {
 
       {/* Model Info */}
       {activeConversation && (
-        <div className="p-3 rounded-lg bg-bg-tertiary border border-border-subtle">
+        <div className="telemetry-card p-3">
           <h4 className="text-xs font-semibold text-text-primary uppercase tracking-wider mb-2 flex items-center gap-1.5">
             <Clock size={12} className="text-accent" />
             Conversation

@@ -43,13 +43,13 @@ export function Sidebar() {
       initial={false}
       animate={{ width: sidebarCollapsed ? 64 : 280 }}
       transition={{ duration: 0.2, ease: 'easeInOut' }}
-      className="flex flex-col border-r border-border-subtle bg-bg-secondary shrink-0"
+      className="sidebar-shell flex flex-col border-r shrink-0"
     >
       {/* Header */}
-      <div className="flex items-center gap-2 p-3 border-b border-border-subtle">
+      <div className="sidebar-section flex items-center gap-2 p-3 border-b">
         <button
           onClick={() => createConversation()}
-          className="flex items-center gap-2 flex-1 justify-center px-3 py-2 rounded-lg bg-accent text-white text-sm font-medium hover:bg-accent-hover transition-colors"
+          className="primary-action flex-1"
           title="New Chat"
         >
           <MessageSquarePlus size={16} />
@@ -57,7 +57,7 @@ export function Sidebar() {
         </button>
         <button
           onClick={toggleSidebar}
-          className="p-2 rounded-lg text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors"
+          className="icon-action"
         >
           {sidebarCollapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
         </button>
@@ -84,10 +84,10 @@ export function Sidebar() {
                 <div
                   key={conv.id}
                   onClick={() => setActiveConversation(conv.id)}
-                  className={`group flex items-center gap-2 px-3 py-2.5 rounded-lg cursor-pointer transition-colors ${
+                  className={`sidebar-item group flex items-center gap-2 px-3 py-2.5 cursor-pointer ${
                     conv.id === activeConversationId
-                      ? 'bg-accent-subtle text-text-primary'
-                      : 'text-text-secondary hover:bg-bg-hover hover:text-text-primary'
+                      ? 'is-active text-text-primary'
+                      : 'text-text-secondary'
                   }`}
                 >
                   <div className="flex-1 min-w-0">
@@ -99,7 +99,7 @@ export function Sidebar() {
                       e.stopPropagation();
                       deleteConversation(conv.id);
                     }}
-                    className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-bg-elevated text-text-muted hover:text-error transition-all"
+                    className="icon-action opacity-0 group-hover:opacity-100 text-text-muted hover:text-error"
                   >
                     ×
                   </button>
@@ -112,12 +112,12 @@ export function Sidebar() {
 
       {/* Preset & Model Selectors */}
       {!sidebarCollapsed && (
-        <div className="px-3 py-2 border-t border-border-subtle space-y-2">
+        <div className="sidebar-section px-3 py-2 border-t space-y-2">
           {/* Preset */}
           <div className="relative">
             <button
               onClick={() => setShowPresetMenu(!showPresetMenu)}
-              className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-bg-tertiary text-sm text-text-secondary hover:bg-bg-hover transition-colors"
+              className="control-surface w-full flex items-center gap-2 px-3 py-2 text-sm text-text-secondary"
             >
               <span className="text-base">{activePreset?.emoji}</span>
               <span className="flex-1 text-left">{activePreset?.label || 'Select Preset'}</span>
@@ -129,7 +129,7 @@ export function Sidebar() {
                   initial={{ opacity: 0, y: -4 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -4 }}
-                  className="absolute bottom-full left-0 right-0 mb-1 bg-bg-elevated border border-border-subtle rounded-lg shadow-xl overflow-hidden z-50"
+                  className="floating-panel absolute bottom-full left-0 right-0 mb-1 overflow-hidden z-50"
                 >
                   {MODEL_PRESETS.map((p) => (
                     <button
@@ -138,7 +138,7 @@ export function Sidebar() {
                         setSelectedPreset(p.id);
                         setShowPresetMenu(false);
                       }}
-                      className={`w-full text-left px-3 py-2 text-sm hover:bg-bg-hover transition-colors ${
+                      className={`command-item w-full text-left px-3 py-2 text-sm ${
                         p.id === selectedPreset ? 'text-accent' : 'text-text-secondary'
                       }`}
                     >
@@ -158,7 +158,7 @@ export function Sidebar() {
           <div className="relative">
             <button
               onClick={() => setShowModelMenu(!showModelMenu)}
-              className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-bg-tertiary text-sm text-text-secondary hover:bg-bg-hover transition-colors"
+              className="control-surface w-full flex items-center gap-2 px-3 py-2 text-sm text-text-secondary"
             >
               <span className="flex-1 text-left">{activeModel?.label || 'Select Model'}</span>
               <span className="text-xs text-text-muted">▼</span>
@@ -169,7 +169,7 @@ export function Sidebar() {
                   initial={{ opacity: 0, y: -4 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -4 }}
-                  className="absolute bottom-full left-0 right-0 mb-1 bg-bg-elevated border border-border-subtle rounded-lg shadow-xl overflow-hidden z-50 max-h-48 overflow-y-auto"
+                  className="floating-panel absolute bottom-full left-0 right-0 mb-1 overflow-hidden z-50 max-h-48 overflow-y-auto"
                 >
                   {modelRegistry.getAll().map((m) => (
                     <button
@@ -178,7 +178,7 @@ export function Sidebar() {
                         setSelectedModel(m.id);
                         setShowModelMenu(false);
                       }}
-                      className={`w-full text-left px-3 py-2 text-sm hover:bg-bg-hover transition-colors ${
+                      className={`command-item w-full text-left px-3 py-2 text-sm ${
                         m.id === selectedModel ? 'text-accent' : 'text-text-secondary'
                       }`}
                     >
@@ -197,24 +197,24 @@ export function Sidebar() {
       )}
 
       {/* Footer */}
-      <div className="flex items-center gap-1 p-2 border-t border-border-subtle">
+      <div className="sidebar-section flex items-center gap-1 p-2 border-t">
         <button
           onClick={openSearch}
-          className="flex-1 flex items-center justify-center gap-2 p-2 rounded-lg text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors"
+          className="icon-action flex-1 flex items-center justify-center gap-2 p-2 text-text-muted hover:text-text-primary"
           title="Search"
         >
           <Search size={16} />
         </button>
         <button
           onClick={toggleRightPanel}
-          className="flex-1 flex items-center justify-center gap-2 p-2 rounded-lg text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors"
+          className="icon-action flex-1 flex items-center justify-center gap-2 p-2 text-text-muted hover:text-text-primary"
           title="Toggle Right Panel"
         >
           <PanelRight size={16} />
         </button>
         <button
           onClick={openSettings}
-          className="flex-1 flex items-center justify-center gap-2 p-2 rounded-lg text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors"
+          className="icon-action flex-1 flex items-center justify-center gap-2 p-2 text-text-muted hover:text-text-primary"
           title="Settings"
         >
           <Settings size={16} />

@@ -123,7 +123,7 @@ export function CommandPalette({ open }: CommandPaletteProps) {
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          className="fixed inset-0 z-50 flex items-start justify-center pt-[15vh] bg-black/60 backdrop-blur-sm"
+          className="modal-backdrop fixed inset-0 z-50 flex items-start justify-center pt-[15vh]"
           onClick={closeCommandPalette}
         >
           <motion.div
@@ -131,11 +131,11 @@ export function CommandPalette({ open }: CommandPaletteProps) {
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: -10 }}
             transition={{ duration: 0.15 }}
-            className="w-full max-w-lg bg-bg-secondary border border-border-subtle rounded-xl shadow-2xl overflow-hidden"
+            className="modal-panel w-full max-w-lg overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Search input */}
-            <div className="flex items-center gap-3 px-4 py-3 border-b border-border-subtle">
+            <div className="panel-header flex items-center gap-3 px-4 py-3">
               <Search size={18} className="text-text-muted" />
               <input
                 type="text"
@@ -145,7 +145,7 @@ export function CommandPalette({ open }: CommandPaletteProps) {
                 className="flex-1 bg-transparent text-sm text-text-primary placeholder:text-text-muted outline-none"
                 autoFocus
               />
-              <kbd className="px-1.5 py-0.5 rounded bg-bg-tertiary border border-border-subtle text-[10px] text-text-muted font-mono">
+              <kbd className="kbd-token px-1.5 py-0.5 text-[10px] text-text-muted font-mono">
                 ESC
               </kbd>
             </div>
@@ -164,14 +164,14 @@ export function CommandPalette({ open }: CommandPaletteProps) {
                   onMouseEnter={() => setSelectedIndex(i)}
                   className={`w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors ${
                     i === selectedIndex
-                      ? 'bg-accent/10 text-accent'
-                      : 'text-text-secondary hover:bg-bg-hover'
+                      ? 'command-item is-active text-accent'
+                      : 'command-item text-text-secondary'
                   }`}
                 >
                   <cmd.icon size={16} />
                   <span className="flex-1 text-sm">{cmd.label}</span>
                   {cmd.shortcut && (
-                    <kbd className="px-1.5 py-0.5 rounded bg-bg-tertiary border border-border-subtle text-[10px] text-text-muted font-mono">
+                    <kbd className="kbd-token px-1.5 py-0.5 text-[10px] text-text-muted font-mono">
                       {cmd.shortcut}
                     </kbd>
                   )}
@@ -180,7 +180,7 @@ export function CommandPalette({ open }: CommandPaletteProps) {
             </div>
 
             {/* Footer */}
-            <div className="flex items-center gap-4 px-4 py-2 border-t border-border-subtle text-[10px] text-text-muted">
+            <div className="panel-header flex items-center gap-4 px-4 py-2 text-[10px] text-text-muted">
               <span className="flex items-center gap-1">
                 <Keyboard size={10} />
                 <span>↑↓ to navigate</span>

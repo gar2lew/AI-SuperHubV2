@@ -182,7 +182,7 @@ export function MessageInput() {
 
   return (
     <div
-      className="relative border-t border-border-subtle bg-bg-secondary px-3 py-3 sm:px-4"
+      className="composer-shell relative px-3 py-3 sm:px-4"
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
@@ -191,7 +191,7 @@ export function MessageInput() {
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          className="absolute inset-0 bg-accent/10 border-2 border-dashed border-accent rounded-lg flex items-center justify-center z-50"
+          className="drop-overlay absolute inset-0 flex items-center justify-center z-50"
         >
           <p className="text-accent font-medium">Drop files here</p>
         </motion.div>
@@ -203,7 +203,7 @@ export function MessageInput() {
           {attachments.map((att, i) => (
             <div
               key={i}
-              className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-bg-tertiary border border-border-subtle text-xs text-text-secondary"
+              className="attachment-chip flex items-center gap-1.5 px-2 py-1 text-xs text-text-secondary"
             >
               {att.type.startsWith('image') ? <Image size={12} /> : <FileText size={12} />}
               <span className="max-w-[120px] truncate">{att.name}</span>
@@ -220,7 +220,7 @@ export function MessageInput() {
       )}
 
       <div className="max-w-3xl mx-auto">
-        <div className="relative flex items-end gap-2 bg-bg-tertiary border border-border-subtle rounded-xl px-3 py-2 focus-within:border-accent/50 focus-within:ring-1 focus-within:ring-accent/20 transition-all">
+        <div className="composer-input relative flex items-end gap-2 px-3 py-2">
           <input
             id="message-attachments"
             ref={fileInputRef}
@@ -232,7 +232,7 @@ export function MessageInput() {
           />
           <button
             onClick={() => fileInputRef.current?.click()}
-            className="shrink-0 p-2 rounded-lg text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors"
+            className="icon-action shrink-0 p-2 text-text-muted hover:text-text-primary"
             title="Attach file"
             aria-label="Attach file"
           >
@@ -257,7 +257,7 @@ export function MessageInput() {
           {isStreaming ? (
             <button
               onClick={stopStreaming}
-              className="shrink-0 p-2 rounded-lg bg-error/10 text-error hover:bg-error/20 transition-colors"
+              className="icon-action danger shrink-0 p-2 text-error"
               title="Stop generation"
               aria-label="Stop generation"
             >
@@ -267,7 +267,7 @@ export function MessageInput() {
             <button
               onClick={handleSend}
               disabled={!input.trim() && attachments.length === 0}
-              className="shrink-0 p-2 rounded-lg bg-accent text-white hover:bg-accent-hover disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              className="primary-action shrink-0 !min-h-0 p-2 disabled:opacity-40 disabled:cursor-not-allowed"
               title="Send message"
               aria-label="Send message"
             >
