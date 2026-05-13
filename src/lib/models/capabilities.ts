@@ -3,6 +3,7 @@ import type { Capability, AIModel } from '@/types';
 export const ALL_CAPABILITIES: Capability[] = [
   'chat',
   'vision',
+  'image',
   'coding',
   'reasoning',
   'research',
@@ -14,6 +15,7 @@ export const ALL_CAPABILITIES: Capability[] = [
 export const CAPABILITY_LABELS: Record<Capability, string> = {
   chat: 'Chat',
   vision: 'Vision',
+  image: 'Image',
   coding: 'Coding',
   reasoning: 'Reasoning',
   research: 'Research',

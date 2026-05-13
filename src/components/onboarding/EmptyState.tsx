@@ -23,19 +23,19 @@ export function EmptyState() {
   };
 
   return (
-    <div className="flex flex-col items-center justify-center h-full px-6">
+    <div className="flex h-full flex-col items-center justify-center px-4 py-4 sm:px-6">
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5 }}
-        className="empty-state-panel text-center max-w-lg"
+        className="empty-state-panel w-full max-w-xl px-4 py-5 text-center sm:px-6 sm:py-6"
       >
-        <div className="hero-orb w-16 h-16 mx-auto mb-6 flex items-center justify-center">
+        <div className="hero-orb mx-auto mb-5 flex h-14 w-14 items-center justify-center sm:h-16 sm:w-16">
           <Sparkles size={28} className="text-accent" />
         </div>
 
         <h1 className="text-2xl font-semibold text-text-primary mb-2">AI Workstation</h1>
-        <p className="text-text-secondary mb-8">
+        <p className="mb-6 text-text-secondary">
           Your personal AI experimentation platform. Multi-provider, extensible, and built for the future.
         </p>
 
@@ -50,17 +50,17 @@ export function EmptyState() {
               animate={{ opacity: 1, x: 0 }}
               transition={{ delay: 0.1 * i }}
               onClick={() => handleSuggestion(suggestion.text)}
-              className="suggestion-card w-full flex items-center gap-3 px-4 py-3 text-left group"
+              className="suggestion-card group flex w-full items-center gap-3 px-4 py-2.5 text-left sm:py-3"
             >
               <suggestion.icon size={18} className={`${suggestion.color} shrink-0`} />
-              <span className="text-sm text-text-secondary group-hover:text-text-primary transition-colors">
+              <span className="text-[0.94rem] text-text-secondary transition-colors group-hover:text-text-primary">
                 {suggestion.text}
               </span>
             </motion.button>
           ))}
         </div>
 
-        <div className="mt-8 flex items-center justify-center gap-4 text-xs text-text-muted">
+        <div className="mt-6 hidden items-center justify-center gap-4 text-xs text-text-muted sm:flex">
           <span className="flex items-center gap-1">
             <kbd className="kbd-token px-1.5 py-0.5 font-mono text-[10px]">Ctrl</kbd>
             +

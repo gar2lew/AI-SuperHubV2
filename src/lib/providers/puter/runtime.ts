@@ -1,10 +1,6 @@
-declare global {
-  interface Window {
-    puter?: any;
-  }
-}
-
 import type { Message } from '@/types';
+import { recordClientError } from '@/lib/diagnostics/client-errors';
+import { recordFallback } from '@/lib/telemetry/runtimeTelemetry';
 import { formatMessages, extractSystemPrompt } from './normalize';
 
 const PUTER_SCRIPT_SRC = 'https://js.puter.com/v2/';
@@ -13,6 +9,30 @@ const DEFAULT_OPERATION_TIMEOUT_MS = 60000;
 const FAILURE_COOLDOWN_MS = 15000;
 
 type RuntimeStatus = 'idle' | 'loading' | 'ready' | 'cooldown' | 'error';
+
+interface PuterAI {
+  chat?: (messages: ReturnType<typeof formatMessages>, options: SafeChatOptions & { system?: string }) => unknown;
+  txt2img?: (prompt: string | Record<string, unknown>, options?: Record<string, unknown> | boolean) => unknown;
+  img?: (prompt: string | Record<string, unknown>, options?: Record<string, unknown> | boolean) => unknown;
+  generateImage?: (prompt: string | Record<string, unknown>, options?: Record<string, unknown> | boolean) => unknown;
+  txt2speech?: (text: string, options: Record<string, unknown>) => unknown;
+  tts?: (text: string, options: Record<string, unknown>) => unknown;
+  speech2txt?: (audio: Blob, options: Record<string, unknown>) => unknown;
+  stt?: (audio: Blob, options: Record<string, unknown>) => unknown;
+}
+
+interface PuterRuntime {
+  ai?: PuterAI;
+  auth?: {
+    getUser?: () => unknown;
+  };
+}
+
+declare global {
+  interface Window {
+    puter?: PuterRuntime;
+  }
+}
 
 export interface PuterRuntimeState {
   status: RuntimeStatus;
@@ -54,7 +74,7 @@ const runtimeState: PuterRuntimeState = {
   activeStreamId: null,
 };
 
-let puterLoadPromise: Promise<any> | null = null;
+let puterLoadPromise: Promise<void> | null = null;
 
 function now() {
   return Date.now();
@@ -161,6 +181,14 @@ export async function ensurePuterLoaded(timeoutMs = DEFAULT_LOAD_TIMEOUT_MS) {
     return window.puter;
   } catch (error) {
     puterLoadPromise = null;
+    recordClientError({
+      source: 'provider-init',
+      error,
+      context: {
+        providerId: 'puter',
+        phase: 'load',
+      },
+    });
     markFailure(error);
     throw error;
   }
@@ -212,6 +240,9 @@ export async function ensurePuterAuthenticated() {
 
 export async function safePuterChat(messages: Message[], options: SafeChatOptions = {}) {
   const puter = await ensurePuterLoaded();
+  const chatApi = puter.ai?.chat;
+  if (!chatApi) throw new Error('Puter chat is unavailable');
+
   const startedAt = now();
   const system = extractSystemPrompt(messages);
   const puterMessages = formatMessages(messages);
@@ -219,7 +250,7 @@ export async function safePuterChat(messages: Message[], options: SafeChatOption
   try {
     const response = await withTimeout(
       Promise.resolve(
-        puter.ai.chat(puterMessages, {
+        chatApi(puterMessages, {
           model: options.model || 'gpt-4o',
           stream: !!options.stream,
           ...(system ? { system } : {}),
@@ -233,6 +264,15 @@ export async function safePuterChat(messages: Message[], options: SafeChatOption
     runtimeState.status = 'ready';
     return response;
   } catch (error) {
+    recordClientError({
+      source: 'provider-call',
+      error,
+      context: {
+        providerId: 'puter',
+        operation: 'chat',
+        stream: !!options.stream,
+      },
+    });
     markFailure(error);
     throw error;
   }
@@ -242,7 +282,33 @@ export async function safePuterImage(prompt: string, options: Record<string, unk
   const puter = await ensurePuterLoaded();
   const imageApi = puter.ai?.txt2img || puter.ai?.img || puter.ai?.generateImage;
   if (!imageApi) throw new Error('Puter image generation is unavailable');
-  return withTimeout(Promise.resolve(imageApi(prompt, options)), DEFAULT_OPERATION_TIMEOUT_MS, 'Puter image');
+  const startedAt = now();
+  const { timeoutMs, ...imageOptions } = options;
+  const hasOptions = Object.keys(imageOptions).length > 0;
+
+  try {
+    const response = await withTimeout(
+      Promise.resolve(imageApi(prompt, hasOptions ? imageOptions : undefined)),
+      typeof timeoutMs === 'number' ? timeoutMs : DEFAULT_OPERATION_TIMEOUT_MS,
+      'Puter image'
+    );
+    runtimeState.providerLatencyMs = now() - startedAt;
+    runtimeState.error = null;
+    runtimeState.status = 'ready';
+    return response;
+  } catch (error) {
+    recordClientError({
+      source: 'provider-call',
+      error,
+      context: {
+        providerId: 'puter',
+        operation: 'image',
+        model: typeof imageOptions.model === 'string' ? imageOptions.model : undefined,
+      },
+    });
+    markFailure(error);
+    throw error;
+  }
 }
 
 export async function safePuterTTS(text: string, options: Record<string, unknown> = {}) {
@@ -263,10 +329,31 @@ export function setActivePuterStream(streamId: string | null) {
   runtimeState.activeStreamId = streamId;
 }
 
-export function recordPuterFallbackEvent() {
+export function recordPuterFallbackEvent(fromProvider?: string, toProvider?: string) {
   runtimeState.fallbackEvents += 1;
+  recordFallback(fromProvider, toProvider);
 }
 
 export function getPuterRuntimeState(): PuterRuntimeState {
   return { ...runtimeState };
+}
+
+export function resetPuterRuntimeForTests() {
+  Object.assign(runtimeState, {
+    status: 'idle',
+    loaded: false,
+    ready: false,
+    authenticated: false,
+    loading: false,
+    error: null,
+    initializedAt: null,
+    lastAuthCheckAt: null,
+    lastFailureAt: null,
+    cooldownUntil: null,
+    timeoutEvents: 0,
+    fallbackEvents: 0,
+    providerLatencyMs: null,
+    activeStreamId: null,
+  } satisfies PuterRuntimeState);
+  puterLoadPromise = null;
 }

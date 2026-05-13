@@ -1,9 +1,11 @@
 import { motion, AnimatePresence } from 'framer-motion';
+import { useState } from 'react';
 import { X, Moon, Sun, Monitor, Database, FlaskConical, Key, Route } from 'lucide-react';
 import { useSettingsStore } from '@/store/settingsStore';
 import { providers } from '@/lib/providers';
-import { MODEL_PRESETS } from '@/lib/models/presets';
+import { MODEL_PRESETS, OTHER_MODELS_PRESET_ID } from '@/lib/models/presets';
 import { modelRegistry } from '@/lib/models/registry';
+import { ModelPicker } from '@/components/models/ModelPicker';
 
 interface SettingsModalProps {
   open: boolean;
@@ -27,6 +29,8 @@ export function SettingsModal({ open }: SettingsModalProps) {
   const selectedModel = useSettingsStore((s) => s.selectedModel);
   const setSelectedPreset = useSettingsStore((s) => s.setSelectedPreset);
   const setSelectedModel = useSettingsStore((s) => s.setSelectedModel);
+  const [advancedOpen, setAdvancedOpen] = useState(selectedPreset === OTHER_MODELS_PRESET_ID);
+  const showAdvancedModels = advancedOpen || selectedPreset === OTHER_MODELS_PRESET_ID;
 
   return (
     <AnimatePresence>
@@ -35,7 +39,7 @@ export function SettingsModal({ open }: SettingsModalProps) {
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          className="modal-backdrop fixed inset-0 z-50 flex items-center justify-center"
+          className="modal-backdrop fixed inset-0 z-50 flex items-center justify-center px-3 py-4"
           onClick={closeSettings}
         >
           <motion.div
@@ -43,11 +47,11 @@ export function SettingsModal({ open }: SettingsModalProps) {
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 10 }}
             transition={{ duration: 0.2 }}
-            className="modal-panel w-full max-w-lg overflow-hidden"
+            className="modal-panel w-full max-w-2xl overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="panel-header flex items-center justify-between px-6 py-4">
-              <h2 className="text-lg font-semibold text-text-primary">Settings</h2>
+            <div className="panel-header flex items-center justify-between px-5 py-4 sm:px-6">
+              <h2 className="text-xl font-semibold text-text-primary">Settings</h2>
               <button
                 onClick={closeSettings}
                 className="icon-action p-1.5 text-text-muted hover:text-text-primary"
@@ -56,48 +60,61 @@ export function SettingsModal({ open }: SettingsModalProps) {
               </button>
             </div>
 
-            <div className="px-6 py-4 space-y-6 max-h-[70vh] overflow-y-auto">
+            <div className="px-5 py-4 sm:px-6 space-y-5 max-h-[76vh] overflow-y-auto">
               {/* Preset & Model */}
               <section>
-                <h3 className="text-sm font-medium text-text-primary mb-3 flex items-center gap-2">
+                <h3 className="text-base font-medium text-text-primary mb-3 flex items-center gap-2">
                   <Route size={14} />
                   Model Routing
                 </h3>
                 <div className="space-y-2">
                   <div>
-                    <label className="text-xs text-text-muted mb-1 block">Preset</label>
+                    <label className="text-sm text-text-muted mb-1.5 block">Preset</label>
                     <select
                       value={selectedPreset}
                       onChange={(e) => setSelectedPreset(e.target.value)}
-                      className="control-surface w-full px-3 py-2 text-sm text-text-primary outline-none"
+                      className="control-surface w-full px-3 py-2.5 text-[0.95rem] text-text-primary outline-none"
                     >
                       {MODEL_PRESETS.map((p) => (
                         <option key={p.id} value={p.id}>
                           {p.emoji} {p.label} — {p.description}
                         </option>
                       ))}
+                      <option value={OTHER_MODELS_PRESET_ID}>Other Models — advanced model browser</option>
                     </select>
                   </div>
                   <div>
-                    <label className="text-xs text-text-muted mb-1 block">Advanced Override</label>
-                    <select
-                      value={selectedModel}
-                      onChange={(e) => setSelectedModel(e.target.value)}
-                      className="control-surface w-full px-3 py-2 text-sm text-text-primary outline-none"
+                    <label className="text-sm text-text-muted mb-1.5 block">
+                      Advanced Override
+                      {activeModelLabel(selectedModel) && (
+                        <span className="ml-2 text-xs text-text-secondary">
+                          {activeModelLabel(selectedModel)}
+                        </span>
+                      )}
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setAdvancedOpen((value) => !value)}
+                      className="control-surface w-full px-3 py-2.5 text-left text-[0.95rem] text-text-secondary"
+                      aria-expanded={showAdvancedModels}
                     >
-                      {modelRegistry.getAll().map((m) => (
-                        <option key={m.id} value={m.id}>
-                          {m.label} ({m.provider})
-                        </option>
-                      ))}
-                    </select>
+                      Other Models
+                      <span className="float-right text-xs text-text-muted">
+                        {showAdvancedModels ? 'Hide' : 'Browse'}
+                      </span>
+                    </button>
+                    {showAdvancedModels && (
+                      <div className="mt-2">
+                        <ModelPicker selectedModel={selectedModel} onSelect={setSelectedModel} />
+                      </div>
+                    )}
                   </div>
                 </div>
               </section>
 
               {/* Theme */}
               <section>
-                <h3 className="text-sm font-medium text-text-primary mb-3 flex items-center gap-2">
+                <h3 className="text-base font-medium text-text-primary mb-3 flex items-center gap-2">
                   <Monitor size={14} />
                   Appearance
                 </h3>
@@ -125,7 +142,7 @@ export function SettingsModal({ open }: SettingsModalProps) {
 
               {/* Chat Preferences */}
               <section>
-                <h3 className="text-sm font-medium text-text-primary mb-3 flex items-center gap-2">
+                <h3 className="text-base font-medium text-text-primary mb-3 flex items-center gap-2">
                   <Database size={14} />
                   Chat Preferences
                 </h3>
@@ -143,7 +160,7 @@ export function SettingsModal({ open }: SettingsModalProps) {
 
               {/* Provider API Keys */}
               <section>
-                <h3 className="text-sm font-medium text-text-primary mb-3 flex items-center gap-2">
+                <h3 className="text-base font-medium text-text-primary mb-3 flex items-center gap-2">
                   <Key size={14} />
                   Provider API Keys
                 </h3>
@@ -153,13 +170,13 @@ export function SettingsModal({ open }: SettingsModalProps) {
                       key={provider.id}
                       className="control-surface flex items-center gap-2 px-3 py-2"
                     >
-                      <span className="text-sm text-text-secondary w-24">{provider.name}</span>
+                      <span className="text-[0.94rem] text-text-secondary w-24">{provider.name}</span>
                       <input
                         type="password"
                         placeholder={provider.isEnabled ? 'Using mock mode' : 'Enter API key'}
                         value={providerSettings[provider.id]?.apiKey || ''}
                         onChange={(e) => setProviderSetting(provider.id, 'apiKey', e.target.value)}
-                        className="flex-1 bg-transparent text-sm text-text-primary placeholder:text-text-muted outline-none"
+                        className="flex-1 bg-transparent text-[0.94rem] text-text-primary placeholder:text-text-muted outline-none"
                       />
                       <span
                         className={`text-[10px] px-1.5 py-0.5 rounded-full ${
@@ -177,7 +194,7 @@ export function SettingsModal({ open }: SettingsModalProps) {
 
               {/* Experimental */}
               <section>
-                <h3 className="text-sm font-medium text-text-primary mb-3 flex items-center gap-2">
+                <h3 className="text-base font-medium text-text-primary mb-3 flex items-center gap-2">
                   <FlaskConical size={14} />
                   Experimental Features
                 </h3>
@@ -200,6 +217,11 @@ export function SettingsModal({ open }: SettingsModalProps) {
   );
 }
 
+function activeModelLabel(modelId: string) {
+  const model = modelRegistry.get(modelId);
+  return model ? `${model.label} · ${model.provider}` : '';
+}
+
 function Toggle({
   label,
   checked,
@@ -211,7 +233,7 @@ function Toggle({
 }) {
   return (
     <label className="flex items-center justify-between cursor-pointer group">
-      <span className="text-sm text-text-secondary group-hover:text-text-primary transition-colors">
+      <span className="text-[0.95rem] text-text-secondary group-hover:text-text-primary transition-colors">
         {label}
       </span>
       <button

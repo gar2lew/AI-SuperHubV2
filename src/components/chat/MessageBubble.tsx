@@ -5,6 +5,7 @@ import type { Message } from '@/types';
 import { useSettingsStore } from '@/store/settingsStore';
 import { formatTimestamp, copyMessageContent } from '@/lib/utils';
 import { MarkdownRenderer } from './renderers/MarkdownRenderer';
+import { StreamingTextRenderer } from './renderers/StreamingTextRenderer';
 import { VisionMessage } from './message/VisionMessage';
 import { ReasoningRenderer } from './renderers/ReasoningRenderer';
 import { textToSpeechArtifact } from '@/lib/providers/puter/speech';
@@ -64,14 +65,14 @@ export function MessageBubble({ message, isStreaming, grouped }: MessageBubblePr
 
   return (
     <article
-      className={`message-bubble group flex gap-3 sm:gap-4 ${isUser ? 'flex-row-reverse' : 'flex-row'} ${
+      className={`message-bubble group flex gap-2.5 sm:gap-3 ${isUser ? 'flex-row-reverse' : 'flex-row'} ${
         isStreaming ? 'is-streaming' : ''
       }`}
       aria-live={isStreaming ? 'polite' : undefined}
     >
       {/* Avatar */}
       <div
-        className={`avatar-token shrink-0 w-8 h-8 flex items-center justify-center ${
+        className={`avatar-token shrink-0 w-8 h-8 sm:w-9 sm:h-9 flex items-center justify-center ${
           grouped ? 'opacity-0' : ''
         } ${isUser ? 'is-user text-white' : 'is-assistant text-accent'}`}
         aria-hidden={grouped}
@@ -80,9 +81,9 @@ export function MessageBubble({ message, isStreaming, grouped }: MessageBubblePr
       </div>
 
       {/* Content */}
-      <div className={`flex-1 min-w-0 ${isUser ? 'max-w-[80%]' : 'max-w-[85%]'}`}>
+      <div className={`flex-1 min-w-0 ${isUser ? 'max-w-[78%]' : 'max-w-[88%]'}`}>
         <div
-          className={`message-content relative rounded-2xl px-4 py-3 sm:px-5 sm:py-3.5 ${
+          className={`message-content relative rounded-2xl px-4 py-3 sm:px-5 sm:py-4 ${
             isUser
               ? 'user-message ml-auto'
               : 'assistant-message'
@@ -121,9 +122,11 @@ export function MessageBubble({ message, isStreaming, grouped }: MessageBubblePr
             {message.content.map((part, i) => {
               if (part.type === 'text') {
                 return isUser ? (
-                  <p key={i} className="text-sm leading-relaxed whitespace-pre-wrap">
+                  <p key={i} className="text-[0.97rem] leading-relaxed whitespace-pre-wrap">
                     {part.text}
                   </p>
+                ) : isStreaming ? (
+                  <StreamingTextRenderer key={i} text={part.text} />
                 ) : (
                   <MarkdownRenderer key={i} text={part.text} />
                 );

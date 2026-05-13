@@ -33,6 +33,70 @@ function responseText(response: unknown): string {
   return String(response ?? '');
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function imageElementSrc(response: unknown): string {
+  if (typeof HTMLImageElement !== 'undefined' && response instanceof HTMLImageElement) {
+    return response.currentSrc || response.src;
+  }
+
+  if (
+    isRecord(response) &&
+    typeof response.tagName === 'string' &&
+    response.tagName.toLowerCase() === 'img' &&
+    typeof response.src === 'string'
+  ) {
+    return response.src;
+  }
+
+  return '';
+}
+
+function firstImageUrl(response: unknown): string {
+  if (!response) return '';
+
+  if (typeof response === 'string') {
+    return response.startsWith('data:') || response.startsWith('blob:') || /^https?:\/\//.test(response)
+      ? response
+      : `data:image/png;base64,${response}`;
+  }
+
+  if (response instanceof Blob) {
+    return URL.createObjectURL(response);
+  }
+
+  const elementSrc = imageElementSrc(response);
+  if (elementSrc) return elementSrc;
+
+  if (Array.isArray(response)) {
+    for (const item of response) {
+      const url = firstImageUrl(item);
+      if (url) return url;
+    }
+    return '';
+  }
+
+  if (!isRecord(response)) return '';
+
+  for (const key of ['url', 'src', 'image', 'image_url', 'dataUrl', 'data_url', 'b64_json', 'base64']) {
+    const candidate = response[key];
+    if (typeof candidate === 'string') {
+      return candidate.startsWith('data:') || candidate.startsWith('blob:') || /^https?:\/\//.test(candidate)
+        ? candidate
+        : `data:image/png;base64,${candidate}`;
+    }
+  }
+
+  for (const key of ['data', 'images', 'output', 'result']) {
+    const url = firstImageUrl(response[key]);
+    if (url) return url;
+  }
+
+  return '';
+}
+
 export function normalizePuterChunk(chunk: unknown, sequence?: number): AIChunk {
   if (!chunk) {
     return { type: 'status', content: 'empty', metadata: { sequence } };
@@ -95,14 +159,11 @@ export function normalizeImageResponse(
   prompt?: string,
   model?: string
 ): NormalizedImageArtifact {
-  const url =
-    typeof response === 'string'
-      ? response
-      : response instanceof Blob
-        ? URL.createObjectURL(response)
-        : response && typeof response === 'object' && typeof (response as { url?: unknown }).url === 'string'
-          ? String((response as { url: string }).url)
-          : '';
+  const url = firstImageUrl(response);
+
+  if (!url) {
+    throw new Error('Puter image response did not include a renderable image URL');
+  }
 
   return {
     id: artifactId('image'),

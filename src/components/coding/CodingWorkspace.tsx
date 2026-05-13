@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { lazy, Suspense, useMemo, useState } from 'react';
 import { Check, Copy, Download, FileCode2, Play, WrapText } from 'lucide-react';
 
 interface CodeArtifact {
@@ -14,6 +14,10 @@ const SAMPLE: CodeArtifact = {
   language: 'ts',
   code: `export function createRuntimeHook() {\n  return {\n    execute: async () => 'Provider-ready sandbox hook',\n  };\n}`,
 };
+
+const LazyCodeViewport = lazy(() =>
+  import('./LazyCodeViewport').then((module) => ({ default: module.LazyCodeViewport }))
+);
 
 export function CodingWorkspace() {
   const [artifacts, setArtifacts] = useState<CodeArtifact[]>([SAMPLE]);
@@ -93,9 +97,15 @@ export function CodingWorkspace() {
             </div>
           </div>
           {selected.code.length > 8000 && <div className="code-size-warning">Large artifact: highlighting and wrapping are optimized for stability.</div>}
-          <pre className={`code-scroll ${wrap ? 'whitespace-pre-wrap' : ''}`}>
-            <code>{selected.code}</code>
-          </pre>
+          <Suspense
+            fallback={
+              <pre className={`code-scroll ${wrap ? 'whitespace-pre-wrap' : ''}`}>
+                <code>Loading editor...</code>
+              </pre>
+            }
+          >
+            <LazyCodeViewport code={selected.code} wrap={wrap} />
+          </Suspense>
           <div className="code-status">{status}</div>
         </div>
       </div>

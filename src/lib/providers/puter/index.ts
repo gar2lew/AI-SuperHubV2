@@ -53,8 +53,8 @@ export class PuterProvider extends BaseProvider {
     return puterChat(messages);
   }
 
-  async *stream(messages: Message[], abortSignal?: AbortSignal): AsyncGenerator<AIChunk> {
-    yield* puterStream(messages, abortSignal);
+  async *stream(messages: Message[], abortSignal?: AbortSignal, modelId?: string): AsyncGenerator<AIChunk> {
+    yield* puterStream(messages, abortSignal, modelId);
   }
 
   // --- Speech ---
@@ -75,7 +75,10 @@ export class PuterProvider extends BaseProvider {
 
   // --- Image ---
 
-  async generateImage(prompt: string, options?: { width?: number; height?: number }): Promise<string> {
+  async generateImage(
+    prompt: string,
+    options?: { width?: number; height?: number; model?: string; abortSignal?: AbortSignal }
+  ): Promise<string> {
     if (!isPuterAvailable()) {
       throw new ProviderError('Puter.js not available for image generation', this.id, 'NOT_AVAILABLE');
     }

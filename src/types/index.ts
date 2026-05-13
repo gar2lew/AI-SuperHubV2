@@ -39,22 +39,28 @@ export type ContentPart = TextPart | ImagePart | AudioPart | FilePart;
 // AI Chunk (normalized streaming events)
 // --------------------------------------------------
 
+export interface AIChunkMetadata extends Record<string, unknown> {
+  sequence?: number;
+  streamId?: string;
+  conversationId?: string;
+}
+
 export interface TextChunk {
   type: 'text';
   content: string;
-  metadata?: Record<string, unknown>;
+  metadata?: AIChunkMetadata;
 }
 
 export interface ReasoningChunk {
   type: 'reasoning';
   content: string;
-  metadata?: Record<string, unknown>;
+  metadata?: AIChunkMetadata;
 }
 
 export interface ToolCallChunk {
   type: 'tool_call';
   content: string;
-  metadata: {
+  metadata: AIChunkMetadata & {
     toolId: string;
     arguments?: Record<string, unknown>;
   };
@@ -63,7 +69,7 @@ export interface ToolCallChunk {
 export interface ToolResultChunk {
   type: 'tool_result';
   content: string;
-  metadata: {
+  metadata: AIChunkMetadata & {
     toolId: string;
     result?: unknown;
   };
@@ -72,7 +78,7 @@ export interface ToolResultChunk {
 export interface StatusChunk {
   type: 'status';
   content: string;
-  metadata?: Record<string, unknown>;
+  metadata?: AIChunkMetadata;
 }
 
 export type AIChunk = TextChunk | ReasoningChunk | ToolCallChunk | ToolResultChunk | StatusChunk;
@@ -156,6 +162,7 @@ export interface Conversation {
 export type Capability =
   | 'chat'
   | 'vision'
+  | 'image'
   | 'coding'
   | 'reasoning'
   | 'research'
@@ -181,6 +188,31 @@ export interface AIModel {
   specializations?: string[];
   fallbacks?: string[];
   tags?: string[];
+}
+
+export type ModelProviderCategory =
+  | 'preset'
+  | 'openai'
+  | 'anthropic'
+  | 'local'
+  | 'puter'
+  | 'openrouter'
+  | 'specialized';
+
+export interface ModelMetadata {
+  id: string;
+  providerName: string;
+  modelName: string;
+  category: ModelProviderCategory;
+  capabilities: Capability[];
+  multimodal: boolean;
+  streaming: boolean;
+  image: boolean;
+  voice: boolean;
+  codingOptimized: boolean;
+  reasoningOptimized: boolean;
+  providerBadge?: string;
+  advanced?: boolean;
 }
 
 // --------------------------------------------------

@@ -21,6 +21,7 @@ export function CommandPalette({ open }: CommandPaletteProps) {
   const toggleTheme = useSettingsStore((s) => s.toggleTheme);
   const toggleRightPanel = useSettingsStore((s) => s.toggleRightPanel);
   const openSettings = useSettingsStore((s) => s.openSettings);
+  const setActiveWorkspace = useSettingsStore((s) => s.setActiveWorkspace);
   const createConversation = useChatStore((s) => s.createConversation);
 
   const [query, setQuery] = useState('');
@@ -35,6 +36,7 @@ export function CommandPalette({ open }: CommandPaletteProps) {
         shortcut: 'Ctrl+N',
         action: () => {
           createConversation();
+          setActiveWorkspace('chat');
           closeCommandPalette();
         },
       },
@@ -69,7 +71,14 @@ export function CommandPalette({ open }: CommandPaletteProps) {
         },
       },
     ],
-    [createConversation, toggleTheme, toggleRightPanel, openSettings, closeCommandPalette]
+    [
+      createConversation,
+      setActiveWorkspace,
+      toggleTheme,
+      toggleRightPanel,
+      openSettings,
+      closeCommandPalette,
+    ]
   );
 
   const filtered = useMemo(() => {

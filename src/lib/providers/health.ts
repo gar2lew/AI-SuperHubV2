@@ -1,4 +1,11 @@
 import type { ProviderHealth } from '@/types';
+import {
+  recordProviderFailure,
+  recordProviderRecovery,
+  recordProviderSuccess,
+  recordProviderTimeout,
+} from './analytics';
+import { recordProviderLatency } from '@/lib/telemetry/runtimeTelemetry';
 
 // ============================================================
 // PROVIDER HEALTH TRACKING
@@ -38,15 +45,22 @@ function getOrCreate(providerId: string): ProviderHealth {
 /** Record a successful provider call. */
 export function recordSuccess(providerId: string, latencyMs: number): void {
   const h = getOrCreate(providerId);
+  const recovered = h.consecutiveFailures > 0 || h.disabled;
   h.latencyMs = latencyMs;
   h.lastSuccessAt = Date.now();
   h.consecutiveFailures = 0;
   h.disabled = false;
   h.disabledUntil = null;
+
+  recordProviderSuccess(providerId, latencyMs);
+  recordProviderLatency(providerId, latencyMs);
+  if (recovered) {
+    recordProviderRecovery(providerId);
+  }
 }
 
 /** Record a failed provider call. */
-export function recordFailure(providerId: string): void {
+export function recordFailure(providerId: string, reason: 'error' | 'timeout' = 'error'): void {
   const h = getOrCreate(providerId);
   h.failures += 1;
   h.lastFailureAt = Date.now();
@@ -56,6 +70,12 @@ export function recordFailure(providerId: string): void {
   const cooldown = getCooldownMs(h.consecutiveFailures);
   h.disabled = true;
   h.disabledUntil = Date.now() + cooldown;
+
+  if (reason === 'timeout') {
+    recordProviderTimeout(providerId);
+  } else {
+    recordProviderFailure(providerId, reason);
+  }
 }
 
 /** Check if a provider is currently healthy. */

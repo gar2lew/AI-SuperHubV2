@@ -1,0 +1,100 @@
+name: PR Validation
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-validation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Build and Vitest
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm exec tsc -- --noEmit
+
+      - name: Build
+        run: npm run build
+
+      - name: Run Vitest
+        run: npm run test:unit
+
+  playwright:
+    name: ${{ matrix.suite.name }}
+    runs-on: ubuntu-latest
+    needs: quality
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        suite:
+          - name: Desktop E2E Chromium
+            command: npm run test:e2e:ci
+            artifact: playwright-desktop-chromium
+          - name: Mobile E2E Chromium
+            command: npm run test:e2e:mobile
+            artifact: playwright-mobile
+          - name: Visual Regression Chromium
+            command: npm run test:visual
+            artifact: playwright-visual
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Restore Playwright browser cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run ${{ matrix.suite.name }}
+        run: ${{ matrix.suite.command }}
+
+      - name: Upload Playwright artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.suite.artifact }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            test-results/**
+            playwright-report/**
+            blob-report/**

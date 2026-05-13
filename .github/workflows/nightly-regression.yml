@@ -1,0 +1,224 @@
+name: Nightly Full Regression
+
+on:
+  schedule:
+    - cron: "17 18 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-full-regression
+  cancel-in-progress: false
+
+jobs:
+  quality:
+    name: Build and Vitest
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm exec tsc -- --noEmit
+
+      - name: Build
+        run: npm run build
+
+      - name: Run Vitest
+        run: npm run test:unit
+
+  desktop-e2e:
+    name: Desktop E2E ${{ matrix.browser }}
+    runs-on: ubuntu-latest
+    needs: quality
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        browser:
+          - chromium
+          - firefox
+          - webkit
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Restore Playwright browser cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright ${{ matrix.browser }}
+        run: npx playwright install --with-deps ${{ matrix.browser }}
+
+      - name: Run desktop E2E
+        run: npm run test:e2e -- --project=${{ matrix.browser }}
+
+      - name: Upload Playwright artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-desktop-${{ matrix.browser }}
+          if-no-files-found: warn
+          retention-days: 21
+          path: |
+            test-results/**
+            playwright-report/**
+            blob-report/**
+
+  mobile-e2e:
+    name: Mobile E2E Chromium
+    runs-on: ubuntu-latest
+    needs: quality
+    timeout-minutes: 35
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Restore Playwright browser cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run mobile E2E
+        run: npm run test:e2e:mobile
+
+      - name: Upload Playwright artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-mobile
+          if-no-files-found: warn
+          retention-days: 21
+          path: |
+            test-results/**
+            playwright-report/**
+            blob-report/**
+
+  visual-regression:
+    name: Visual Regression Chromium
+    runs-on: ubuntu-latest
+    needs: quality
+    timeout-minutes: 35
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Restore Playwright browser cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run visual regression
+        run: npm run test:visual
+
+      - name: Upload Playwright artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-visual
+          if-no-files-found: warn
+          retention-days: 21
+          path: |
+            test-results/**
+            playwright-report/**
+            blob-report/**
+
+  lighthouse:
+    name: Lighthouse smoke report
+    runs-on: ubuntu-latest
+    needs: quality
+    timeout-minutes: 15
+    continue-on-error: true
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Collect Lighthouse report
+        run: >
+          npx -y @lhci/cli@0.15.1 autorun
+          --collect.startServerCommand="npm run preview -- --host 127.0.0.1 --port 4179"
+          --collect.url="http://127.0.0.1:4179"
+          --collect.numberOfRuns=1
+          --upload.target=filesystem
+          --upload.outputDir=.lighthouseci
+
+      - name: Upload Lighthouse report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lighthouse-smoke-report
+          if-no-files-found: warn
+          retention-days: 21
+          path: .lighthouseci/**

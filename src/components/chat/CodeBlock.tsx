@@ -1,31 +1,100 @@
-import { lazy, Suspense, useMemo, useState } from 'react';
-import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { Check, ChevronsUpDown, Copy, Download, Play, WrapText } from 'lucide-react';
 
 interface CodeBlockProps {
   language: string;
   children: string;
+  deferHighlight?: boolean;
 }
 
-const SyntaxHighlighter = lazy(() =>
-  import('react-syntax-highlighter').then((module) => ({ default: module.Prism }))
-);
+const LARGE_BLOCK_CHAR_LIMIT = 12000;
+const COLLAPSIBLE_CHAR_LIMIT = 5000;
+const COLLAPSIBLE_LINE_LIMIT = 32;
+const EXPANDED_BY_DEFAULT_LIMIT = 9000;
+const IMMEDIATE_HIGHLIGHT_CHAR_LIMIT = 1800;
+const DEFERRED_HIGHLIGHT_DELAY_MS = 140;
 
-export function CodeBlock({ language, children }: CodeBlockProps) {
+const SyntaxHighlighter = lazy(() => import('./renderers/LazyPrismHighlighter'));
+
+function exceedsLineLimit(source: string, lineLimit: number): boolean {
+  let lineCount = 1;
+
+  for (let i = 0; i < source.length; i += 1) {
+    if (source.charCodeAt(i) === 10) {
+      lineCount += 1;
+      if (lineCount > lineLimit) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+export const CodeBlock = memo(function CodeBlock({ language, children, deferHighlight = false }: CodeBlockProps) {
   const [copied, setCopied] = useState(false);
-  const [expanded, setExpanded] = useState(children.length <= 9000);
+  const [expanded, setExpanded] = useState(children.length <= EXPANDED_BY_DEFAULT_LIMIT);
   const [wrap, setWrap] = useState(false);
+  const [shouldHighlight, setShouldHighlight] = useState(
+    () => children.length <= IMMEDIATE_HIGHLIGHT_CHAR_LIMIT
+  );
 
-  const handleCopy = async () => {
+  const handleCopy = useCallback(async () => {
     await navigator.clipboard.writeText(children);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
-  };
+  }, [children]);
 
   const displayLanguage = language || 'text';
-  const isLarge = children.length > 12000;
-  const isCollapsible = children.split('\n').length > 32 || children.length > 5000;
-  const downloadUrl = `data:text/plain;charset=utf-8,${encodeURIComponent(children)}`;
+  const isLarge = children.length > LARGE_BLOCK_CHAR_LIMIT;
+  const isCollapsible = useMemo(
+    () => children.length > COLLAPSIBLE_CHAR_LIMIT || exceedsLineLimit(children, COLLAPSIBLE_LINE_LIMIT),
+    [children]
+  );
+  const canHighlight = !deferHighlight && !isLarge && (!isCollapsible || expanded);
+
+  useEffect(() => {
+    if (!canHighlight) {
+      setShouldHighlight(false);
+      return;
+    }
+
+    if (children.length <= IMMEDIATE_HIGHLIGHT_CHAR_LIMIT) {
+      setShouldHighlight(true);
+      return;
+    }
+
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    let idleId: number | undefined;
+
+    const idleWindow = window as Window & {
+      requestIdleCallback?: (callback: IdleRequestCallback) => number;
+      cancelIdleCallback?: (handle: number) => void;
+    };
+
+    const activateHighlight = () => setShouldHighlight(true);
+
+    if (typeof idleWindow.requestIdleCallback === 'function') {
+      idleId = idleWindow.requestIdleCallback(activateHighlight);
+    } else {
+      timeoutId = setTimeout(activateHighlight, DEFERRED_HIGHLIGHT_DELAY_MS);
+    }
+
+    return () => {
+      if (idleId !== undefined && typeof idleWindow.cancelIdleCallback === 'function') {
+        idleWindow.cancelIdleCallback(idleId);
+      }
+      if (timeoutId !== undefined) {
+        clearTimeout(timeoutId);
+      }
+    };
+  }, [canHighlight, children.length]);
+
+  const downloadUrl = useMemo(
+    () => `data:text/plain;charset=utf-8,${encodeURIComponent(children)}`,
+    [children]
+  );
+
   const plainCode = useMemo(
     () => (
       <pre className={`overflow-x-auto p-4 text-[0.8125rem] leading-relaxed ${wrap ? 'whitespace-pre-wrap' : ''}`}>
@@ -91,26 +160,13 @@ export function CodeBlock({ language, children }: CodeBlockProps) {
 
       {/* Code */}
       <div className={isCollapsible && !expanded ? 'code-collapsed' : undefined}>
-      {isLarge ? (
+      {!shouldHighlight ? (
         plainCode
       ) : (
         <Suspense fallback={plainCode}>
           <SyntaxHighlighter
             language={displayLanguage}
-            style={vscDarkPlus}
-            customStyle={{
-              margin: 0,
-              padding: '1rem',
-              background: 'transparent',
-              fontSize: '0.8125rem',
-              lineHeight: '1.6',
-            }}
-            codeTagProps={{
-              style: {
-                fontFamily: "'JetBrains Mono', 'Fira Code', 'Consolas', monospace",
-                whiteSpace: wrap ? 'pre-wrap' : 'pre',
-              },
-            }}
+            wrap={wrap}
           >
             {children}
           </SyntaxHighlighter>
@@ -124,4 +180,4 @@ export function CodeBlock({ language, children }: CodeBlockProps) {
       )}
     </div>
   );
-}
+});

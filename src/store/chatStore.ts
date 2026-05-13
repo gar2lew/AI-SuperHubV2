@@ -3,8 +3,9 @@ import { persist } from 'zustand/middleware';
 import type { Conversation, Message, AIChunk } from '@/types';
 import { generateId, messageToTitle, finalizeChunks } from '@/lib/utils';
 import { DEFAULT_PRESET_ID, resolvePresetToModel } from '@/lib/models/presets';
-import { StreamEngine } from '@/lib/streaming/stream-engine';
+import { getChunkSequence, StreamEngine } from '@/lib/streaming/stream-engine';
 import { recordSuccess, recordFailure } from '@/lib/providers/health';
+import { recordProviderStreamInterruption } from '@/lib/providers/analytics';
 
 interface ChatState {
   conversations: Conversation[];
@@ -60,9 +61,30 @@ export const useChatStore = create<ChatState>()(
       currentStreamId: null,
 
       createConversation: () => {
+        const { isStreaming, abortController, streamEngine } = get();
+        if (isStreaming) {
+          const streamingConversationId = streamEngine?.getDiagnostics().conversationId;
+          const streaming = get().conversations.find((c) => c.id === streamingConversationId)?.streaming;
+          if (streaming) {
+            recordProviderStreamInterruption(streaming.providerId, 'conversation-reset');
+          }
+          abortController?.abort();
+          set({ currentStreamId: null });
+          streamEngine?.abort();
+        }
+
         const conversation = createDefaultConversation();
         set((state) => ({
-          conversations: [conversation, ...state.conversations],
+          isStreaming: false,
+          streamEngine: null,
+          abortController: null,
+          currentStreamId: null,
+          conversations: [
+            conversation,
+            ...state.conversations.map((c) =>
+              c.streaming ? { ...c, streaming: undefined } : c
+            ),
+          ],
           activeConversationId: conversation.id,
         }));
         return conversation.id;
@@ -72,9 +94,24 @@ export const useChatStore = create<ChatState>()(
         // Abort any active stream when switching conversations
         const { isStreaming, abortController, streamEngine } = get();
         if (isStreaming) {
+          const streamingConversationId = streamEngine?.getDiagnostics().conversationId;
+          const streaming = get().conversations.find((c) => c.id === streamingConversationId)?.streaming;
+          if (streaming) {
+            recordProviderStreamInterruption(streaming.providerId, 'conversation-switch');
+          }
+          set((state) => ({
+            isStreaming: false,
+            streamEngine: null,
+            abortController: null,
+            currentStreamId: null,
+            activeConversationId: id,
+            conversations: state.conversations.map((c) =>
+              c.id === streamingConversationId ? { ...c, streaming: undefined } : c
+            ),
+          }));
           abortController?.abort();
           streamEngine?.abort();
-          set({ isStreaming: false, streamEngine: null, abortController: null, currentStreamId: null });
+          return;
         }
         set({ activeConversationId: id });
       },
@@ -151,30 +188,30 @@ export const useChatStore = create<ChatState>()(
               if (get().currentStreamId !== streamId) return;
 
               set((state) => ({
-                conversations: state.conversations.map((c) =>
-                  c.id === conversationId
-                    ? {
-                        ...c,
-                        streaming: {
-                          ...c.streaming!,
-                          buffer: [
-                            ...(c.streaming?.buffer || []),
-                            ...chunks.filter((chunk) => {
-                              const sequence = chunk.metadata?.sequence;
-                              return (
-                                typeof sequence !== 'number' ||
-                                sequence > (c.streaming?.lastSequence ?? -1)
-                              );
-                            }),
-                          ],
-                          lastSequence: chunks.reduce((max, chunk) => {
-                            const sequence = chunk.metadata?.sequence;
-                            return typeof sequence === 'number' ? Math.max(max, sequence) : max;
-                          }, c.streaming?.lastSequence ?? -1),
-                        },
-                      }
-                    : c
-                ),
+                conversations: state.conversations.map((c) => {
+                  if (c.id !== conversationId) return c;
+
+                  const acceptedChunks: AIChunk[] = [];
+                  let lastSequence = c.streaming?.lastSequence ?? -1;
+
+                  for (const chunk of chunks) {
+                    const sequence = getChunkSequence(chunk);
+                    if (typeof sequence === 'number') {
+                      if (sequence <= lastSequence) continue;
+                      lastSequence = sequence;
+                    }
+                    acceptedChunks.push(chunk);
+                  }
+
+                  return {
+                    ...c,
+                    streaming: {
+                      ...c.streaming!,
+                      buffer: [...(c.streaming?.buffer || []), ...acceptedChunks],
+                      lastSequence,
+                    },
+                  };
+                }),
               }));
             },
             onDone: () => {
@@ -189,17 +226,18 @@ export const useChatStore = create<ChatState>()(
             },
             onAbort: () => {
               if (get().currentStreamId !== streamId) return;
+              recordProviderStreamInterruption(providerId);
               get().finalizeStream(conversationId, streamId);
             },
             onTimeout: () => {
               if (get().currentStreamId !== streamId) return;
               console.warn('Stream timed out');
-              recordFailure(providerId);
+              recordFailure(providerId, 'timeout');
               get().finalizeStream(conversationId, streamId);
             },
           },
-          { coalesceText: true, flushIntervalMs: 16, maxBufferSize: 50, timeoutMs: 60000 },
-          { streamId, conversationId }
+          { coalesceText: true, flushIntervalMs: 32, maxBufferSize: 80, timeoutMs: 60000 },
+          { streamId, conversationId, providerId, modelId }
         );
 
         engine.start();
@@ -279,14 +317,22 @@ export const useChatStore = create<ChatState>()(
 
       stopStreaming: () => {
         const { abortController, streamEngine } = get();
-        abortController?.abort();
-        streamEngine?.abort();
-        set({
+        const streamingConversationId = streamEngine?.getDiagnostics().conversationId;
+        const streaming = get().conversations.find((c) => c.id === streamingConversationId)?.streaming;
+        if (streaming) {
+          recordProviderStreamInterruption(streaming.providerId, 'user-stop');
+        }
+        set((state) => ({
           isStreaming: false,
           streamEngine: null,
           abortController: null,
           currentStreamId: null,
-        });
+          conversations: state.conversations.map((c) =>
+            c.id === streamingConversationId ? { ...c, streaming: undefined } : c
+          ),
+        }));
+        abortController?.abort();
+        streamEngine?.abort();
       },
 
       setAbortController: (controller) => {

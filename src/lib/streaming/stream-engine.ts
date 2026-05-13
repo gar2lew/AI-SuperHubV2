@@ -1,4 +1,12 @@
-import type { AIChunk } from '@/types';
+import type { AIChunk, AIChunkMetadata } from '@/types';
+import { recordClientError } from '@/lib/diagnostics/client-errors';
+import {
+  recordStreamAbort,
+  recordStreamChunk,
+  recordStreamComplete,
+  recordStreamError,
+  recordStreamStart,
+} from '@/lib/telemetry/runtimeTelemetry';
 
 // ============================================================
 // STREAM ENGINE
@@ -36,6 +44,25 @@ export interface StreamCallbacks {
 export interface StreamOwner {
   streamId: string;
   conversationId?: string;
+  providerId?: string;
+  modelId?: string;
+}
+
+export interface StreamDiagnostics {
+  chunkCount: number;
+  bufferedCount: number;
+  pendingCount: number;
+  lastChunkAt: number;
+  startedAt: number;
+  durationMs: number;
+  throughputPerSecond: number;
+  streamId?: string;
+  conversationId?: string;
+  isRunning: boolean;
+}
+
+export function getChunkSequence(chunk: AIChunk): number | undefined {
+  return chunk.metadata?.sequence;
 }
 
 /**
@@ -56,6 +83,7 @@ export class StreamEngine {
   private startedAt = 0;
   private owner?: StreamOwner;
   private seenSequences = new Set<number>();
+  private lastSequence = -1;
 
   constructor(callbacks: StreamCallbacks, options: StreamEngineOptions = {}, owner?: StreamOwner) {
     this.callbacks = callbacks;
@@ -72,7 +100,14 @@ export class StreamEngine {
     this.startedAt = Date.now();
     this.chunkCount = 0;
     this.sequence = 0;
+    this.lastSequence = -1;
     this.seenSequences.clear();
+    recordStreamStart({
+      streamId: this.owner?.streamId ?? 'unowned-stream',
+      conversationId: this.owner?.conversationId,
+      providerId: this.owner?.providerId ?? 'unknown',
+      modelId: this.owner?.modelId ?? 'unknown',
+    });
     this.startTimeout();
   }
 
@@ -102,14 +137,17 @@ export class StreamEngine {
     if (!this.isRunning) return;
 
     const enriched = this.withMetadata(chunk);
-    const sequence = enriched.metadata?.sequence;
+    const sequence = getChunkSequence(enriched);
     if (typeof sequence === 'number') {
+      if (sequence <= this.lastSequence) return;
       if (this.seenSequences.has(sequence)) return;
       this.seenSequences.add(sequence);
+      this.lastSequence = sequence;
     }
 
     this.pending.push(enriched);
     this.chunkCount++;
+    recordStreamChunk(this.owner?.streamId ?? 'unowned-stream', String(enriched.content).length);
     this.resetTimeout();
 
     // Force flush if buffer gets too large
@@ -149,7 +187,7 @@ export class StreamEngine {
   private coalesceTextChunks(chunks: AIChunk[]): AIChunk[] {
     const result: AIChunk[] = [];
     let textAccumulator = '';
-    let lastMetadata: Record<string, unknown> | undefined;
+    let lastMetadata: AIChunkMetadata | undefined;
 
     for (const chunk of chunks) {
       if (chunk.type === 'text') {
@@ -175,13 +213,25 @@ export class StreamEngine {
   }
 
   private withMetadata(chunk: AIChunk): AIChunk {
-    const metadata = {
+    const sequence = chunk.metadata?.sequence ?? this.sequence++;
+    if (typeof chunk.metadata?.sequence === 'number') {
+      this.sequence = Math.max(this.sequence, chunk.metadata.sequence + 1);
+    }
+
+    const metadata: AIChunkMetadata = {
       ...(chunk.metadata || {}),
       streamId: this.owner?.streamId,
       conversationId: this.owner?.conversationId,
-      sequence: chunk.metadata?.sequence ?? this.sequence++,
+      sequence,
     };
-    return { ...chunk, metadata } as AIChunk;
+
+    switch (chunk.type) {
+      case 'tool_call':
+      case 'tool_result':
+        return { ...chunk, metadata: { ...chunk.metadata, ...metadata } };
+      default:
+        return { ...chunk, metadata };
+    }
   }
 
   /** Signal completion. */
@@ -194,6 +244,7 @@ export class StreamEngine {
       this.rafId = null;
     }
     this.callbacks.onDone();
+    recordStreamComplete(this.owner?.streamId ?? 'unowned-stream');
   }
 
   /** Signal error. */
@@ -206,6 +257,17 @@ export class StreamEngine {
       this.rafId = null;
     }
     this.callbacks.onError(err);
+    recordClientError({
+      source: 'stream',
+      error: err,
+      context: {
+        streamId: this.owner?.streamId,
+        conversationId: this.owner?.conversationId,
+        providerId: this.owner?.providerId,
+        modelId: this.owner?.modelId,
+      },
+    });
+    recordStreamError(this.owner?.streamId ?? 'unowned-stream');
   }
 
   /** Signal abort. */
@@ -218,6 +280,7 @@ export class StreamEngine {
       this.rafId = null;
     }
     this.callbacks.onAbort();
+    recordStreamAbort(this.owner?.streamId ?? 'unowned-stream');
   }
 
   private clearTimeout(): void {
@@ -238,13 +301,7 @@ export class StreamEngine {
   }
 
   /** Get diagnostics. */
-  getDiagnostics(): {
-    chunkCount: number;
-    bufferedCount: number;
-    pendingCount: number;
-    lastChunkAt: number;
-    isRunning: boolean;
-  } {
+  getDiagnostics(): StreamDiagnostics {
     return {
       chunkCount: this.chunkCount,
       bufferedCount: this.buffer.length,

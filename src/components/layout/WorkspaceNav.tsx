@@ -15,14 +15,14 @@ export function WorkspaceNav() {
 
   return (
     <nav className="workspace-nav px-3 py-2" aria-label="Workspace navigation">
-      <div className="mx-auto flex max-w-5xl items-center gap-1 overflow-x-auto">
+      <div className="mx-auto flex max-w-6xl items-center gap-1 overflow-x-auto">
         {WORKSPACES.map((workspace) => (
           <button
             key={workspace.id}
             onClick={() => setActiveWorkspace(workspace.id)}
             aria-current={activeWorkspace === workspace.id ? 'page' : undefined}
             aria-label={`${workspace.label} workspace`}
-            className={`workspace-tab flex min-h-10 shrink-0 items-center gap-2 px-3 text-sm font-medium ${
+            className={`workspace-tab flex min-h-10 shrink-0 items-center gap-2 px-3.5 text-[0.92rem] font-medium ${
               activeWorkspace === workspace.id
                 ? 'is-active text-white'
                 : 'text-text-muted'

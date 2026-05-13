@@ -1,4 +1,4 @@
-import { memo } from 'react';
+import { memo, useMemo } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
 import type { Message } from '@/types';
 import { MessageBubble } from './MessageBubble';
@@ -16,9 +16,18 @@ export const MessageList = memo(function MessageList({ messages }: MessageListPr
   const streamText = useChatStore((s) => s.getStreamText());
   const reduceMotion = useReducedMotion();
   useRenderProfile('MessageList');
+  const streamingMessage = useMemo<Message>(
+    () => ({
+      id: 'streaming',
+      role: 'assistant',
+      content: textContent(streamText),
+      createdAt: 0,
+    }),
+    [streamText]
+  );
 
   return (
-    <div className="message-list mx-auto max-w-3xl">
+    <div className="message-list chat-width mx-auto">
       {messages.map((message, index) => (
         <motion.div
           key={message.id}
@@ -43,12 +52,7 @@ export const MessageList = memo(function MessageList({ messages }: MessageListPr
           className="message-item stream-reveal"
         >
           <MessageBubble
-            message={{
-              id: 'streaming',
-              role: 'assistant',
-              content: textContent(streamText),
-              createdAt: Date.now(),
-            }}
+            message={streamingMessage}
             isStreaming={true}
           />
         </motion.div>

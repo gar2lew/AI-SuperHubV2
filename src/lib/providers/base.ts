@@ -8,7 +8,7 @@ export interface AIProvider {
   readonly isEnabled: boolean;
 
   chat(messages: Message[]): Promise<string>;
-  stream(messages: Message[], abortSignal?: AbortSignal): AsyncGenerator<AIChunk>;
+  stream(messages: Message[], abortSignal?: AbortSignal, modelId?: string): AsyncGenerator<AIChunk>;
   validateConfig(): boolean;
 }
 
@@ -20,7 +20,7 @@ export abstract class BaseProvider implements AIProvider {
   abstract readonly isEnabled: boolean;
 
   abstract chat(messages: Message[]): Promise<string>;
-  abstract stream(messages: Message[], abortSignal?: AbortSignal): AsyncGenerator<AIChunk>;
+  abstract stream(messages: Message[], abortSignal?: AbortSignal, modelId?: string): AsyncGenerator<AIChunk>;
 
   validateConfig(): boolean {
     return true;

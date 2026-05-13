@@ -1,7 +1,8 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { Settings, ProviderId } from '@/types';
-import { DEFAULT_PRESET_ID, resolvePresetToModel } from '@/lib/models/presets';
+import { DEFAULT_PRESET_ID, OTHER_MODELS_PRESET_ID, resolvePresetToModel } from '@/lib/models/presets';
+import { modelRegistry } from '@/lib/models/registry';
 
 export type WorkspaceId = 'chat' | 'coding' | 'image' | 'voice' | 'terminal';
 
@@ -56,6 +57,10 @@ const defaultSettings: Settings = {
   providerSettings: {},
 };
 
+function isProviderId(provider: string): provider is ProviderId {
+  return ['puter', 'openai', 'anthropic', 'ollama', 'openrouter'].includes(provider);
+}
+
 export const useSettingsStore = create<SettingsState>()(
   persist(
     (set) => ({
@@ -84,11 +89,28 @@ export const useSettingsStore = create<SettingsState>()(
         set((state) => ({ rightPanelOpen: !state.rightPanelOpen })),
 
       setSelectedProvider: (selectedProvider) => set({ selectedProvider }),
-      setSelectedModel: (selectedModel) => set({ selectedModel }),
+      setSelectedModel: (selectedModel) => {
+        const model = modelRegistry.get(selectedModel);
+        set({
+          selectedModel,
+          selectedPreset: OTHER_MODELS_PRESET_ID,
+          ...(model?.provider && isProviderId(model.provider) ? { selectedProvider: model.provider } : {}),
+        });
+      },
 
       setSelectedPreset: (selectedPreset) => {
+        if (selectedPreset === OTHER_MODELS_PRESET_ID) {
+          set({ selectedPreset });
+          return;
+        }
+
         const modelId = resolvePresetToModel(selectedPreset);
-        set({ selectedPreset, selectedModel: modelId });
+        const model = modelRegistry.get(modelId);
+        set({
+          selectedPreset,
+          selectedModel: modelId,
+          ...(model?.provider && isProviderId(model.provider) ? { selectedProvider: model.provider } : {}),
+        });
       },
 
       setAutoScroll: (autoScroll) => set({ autoScroll }),

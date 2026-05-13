@@ -6,11 +6,25 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "build:singlefile": "vite build --mode singlefile",
+    "preview": "vite preview",
+    "deploy:env": "node scripts/validate-deployment-env.mjs",
+    "deploy:check": "npm run deploy:env && npm run build",
+    "deploy:preview": "node scripts/validate-preview.mjs",
+    "deploy:vercel:preview": "node scripts/vercel-deploy.mjs preview",
+    "deploy:vercel:prod": "node scripts/vercel-deploy.mjs production",
+    "test": "vitest run --config vitest.config.ts",
+    "test:unit": "vitest run --config vitest.config.ts",
+    "test:e2e": "playwright test --config playwright.config.ts",
+    "test:e2e:desktop": "playwright test --config playwright.config.ts",
+    "test:e2e:ci": "playwright test --config playwright.config.ts --project=chromium",
+    "test:e2e:mobile": "playwright test --config tests/e2e/mobile/playwright.mobile.config.ts",
+    "test:visual": "playwright test --config tests/visual/playwright.visual.config.ts",
+    "test:visual:update": "playwright test --config tests/visual/playwright.visual.config.ts --update-snapshots",
+    "test:browsers": "playwright install chromium firefox webkit",
+    "test:ci": "npm exec tsc -- --noEmit && npm run build && npm run test:unit && npm run test:e2e:ci && npm run test:e2e:mobile && npm run test:visual"
   },
   "dependencies": {
-    "@types/react-syntax-highlighter": "^15.5.13",
-    "@types/uuid": "^10.0.0",
     "clsx": "2.1.1",
     "framer-motion": "^12.38.0",
     "lucide-react": "^1.14.0",
@@ -19,18 +33,21 @@
     "react-markdown": "^10.1.0",
     "react-syntax-highlighter": "^16.1.1",
     "tailwind-merge": "3.4.0",
-    "uuid": "^14.0.0",
     "zustand": "^5.0.13"
   },
   "devDependencies": {
+    "@playwright/test": "^1.60.0",
     "@tailwindcss/vite": "4.1.17",
     "@types/node": "22.19.17",
     "@types/react": "19.2.7",
     "@types/react-dom": "19.2.3",
+    "@types/react-syntax-highlighter": "^15.5.13",
     "@vitejs/plugin-react": "5.1.1",
+    "jsdom": "^29.1.1",
     "tailwindcss": "4.1.17",
     "typescript": "5.9.3",
     "vite": "7.3.2",
-    "vite-plugin-singlefile": "2.3.0"
+    "vite-plugin-singlefile": "2.3.0",
+    "vitest": "^4.1.6"
   }
 }

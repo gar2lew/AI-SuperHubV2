@@ -49,6 +49,7 @@ export const MODEL_PRESETS: ModelPreset[] = [
 ];
 
 export const DEFAULT_PRESET_ID = 'smart';
+export const OTHER_MODELS_PRESET_ID = 'other-models';
 
 export function getPreset(id: string): ModelPreset | undefined {
   return MODEL_PRESETS.find((p) => p.id === id);

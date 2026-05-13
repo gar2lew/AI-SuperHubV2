@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { useChatStore } from '@/store/chatStore';
 import { useSettingsStore } from '@/store/settingsStore';
+import { recordHydrationComplete } from '@/lib/telemetry/runtimeTelemetry';
 
 function KeyboardShortcuts() {
   const toggleSidebar = useSettingsStore((s) => s.toggleSidebar);
@@ -9,6 +10,7 @@ function KeyboardShortcuts() {
   const openSettings = useSettingsStore((s) => s.openSettings);
   const openCommandPalette = useSettingsStore((s) => s.openCommandPalette);
   const openSearch = useSettingsStore((s) => s.openSearch);
+  const setActiveWorkspace = useSettingsStore((s) => s.setActiveWorkspace);
   const createConversation = useChatStore((s) => s.createConversation);
 
   useEffect(() => {
@@ -24,6 +26,7 @@ function KeyboardShortcuts() {
       if ((e.ctrlKey || e.metaKey) && e.key === 'n') {
         e.preventDefault();
         createConversation();
+        setActiveWorkspace('chat');
         return;
       }
 
@@ -66,6 +69,7 @@ function KeyboardShortcuts() {
     openSettings,
     openCommandPalette,
     openSearch,
+    setActiveWorkspace,
     createConversation,
   ]);
 
@@ -73,6 +77,10 @@ function KeyboardShortcuts() {
 }
 
 function App() {
+  useEffect(() => {
+    recordHydrationComplete();
+  }, []);
+
   return (
     <>
       <KeyboardShortcuts />

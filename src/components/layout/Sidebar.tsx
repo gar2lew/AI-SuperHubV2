@@ -13,7 +13,8 @@ import { useChatStore } from '@/store/chatStore';
 import { useSettingsStore } from '@/store/settingsStore';
 import { formatDate, truncate } from '@/lib/utils';
 import { modelRegistry } from '@/lib/models/registry';
-import { MODEL_PRESETS, getPreset } from '@/lib/models/presets';
+import { MODEL_PRESETS, OTHER_MODELS_PRESET_ID, getPreset } from '@/lib/models/presets';
+import { ModelPicker } from '@/components/models/ModelPicker';
 
 export function Sidebar() {
   const sidebarCollapsed = useSettingsStore((s) => s.sidebarCollapsed);
@@ -23,6 +24,7 @@ export function Sidebar() {
   const openSearch = useSettingsStore((s) => s.openSearch);
   const selectedPreset = useSettingsStore((s) => s.selectedPreset);
   const selectedModel = useSettingsStore((s) => s.selectedModel);
+  const setActiveWorkspace = useSettingsStore((s) => s.setActiveWorkspace);
   const setSelectedPreset = useSettingsStore((s) => s.setSelectedPreset);
   const setSelectedModel = useSettingsStore((s) => s.setSelectedModel);
 
@@ -37,18 +39,23 @@ export function Sidebar() {
 
   const activePreset = getPreset(selectedPreset);
   const activeModel = modelRegistry.get(selectedModel);
+  const presetLabel = selectedPreset === OTHER_MODELS_PRESET_ID ? 'Other Models' : activePreset?.label;
+  const presetEmoji = selectedPreset === OTHER_MODELS_PRESET_ID ? '⋯' : activePreset?.emoji;
 
   return (
     <motion.aside
       initial={false}
-      animate={{ width: sidebarCollapsed ? 64 : 280 }}
+      animate={{ width: sidebarCollapsed ? 64 : 296 }}
       transition={{ duration: 0.2, ease: 'easeInOut' }}
       className="sidebar-shell flex flex-col border-r shrink-0"
     >
       {/* Header */}
-      <div className="sidebar-section flex items-center gap-2 p-3 border-b">
+      <div className="sidebar-section flex items-center gap-2 p-3.5 border-b">
         <button
-          onClick={() => createConversation()}
+          onClick={() => {
+            createConversation();
+            setActiveWorkspace('chat');
+          }}
           className="primary-action flex-1"
           title="New Chat"
         >
@@ -91,8 +98,8 @@ export function Sidebar() {
                   }`}
                 >
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate">{truncate(conv.title, 28)}</p>
-                    <p className="text-xs text-text-muted">{formatDate(conv.updatedAt)}</p>
+                    <p className="text-[0.94rem] font-medium truncate">{truncate(conv.title, 30)}</p>
+                    <p className="text-xs leading-5 text-text-muted">{formatDate(conv.updatedAt)}</p>
                   </div>
                   <button
                     onClick={(e) => {
@@ -112,15 +119,15 @@ export function Sidebar() {
 
       {/* Preset & Model Selectors */}
       {!sidebarCollapsed && (
-        <div className="sidebar-section px-3 py-2 border-t space-y-2">
+        <div className="sidebar-section px-3 py-3 border-t space-y-2.5">
           {/* Preset */}
           <div className="relative">
             <button
               onClick={() => setShowPresetMenu(!showPresetMenu)}
-              className="control-surface w-full flex items-center gap-2 px-3 py-2 text-sm text-text-secondary"
+              className="control-surface w-full flex items-center gap-2 px-3 py-2.5 text-[0.9rem] text-text-secondary"
             >
-              <span className="text-base">{activePreset?.emoji}</span>
-              <span className="flex-1 text-left">{activePreset?.label || 'Select Preset'}</span>
+              <span className="text-base">{presetEmoji}</span>
+              <span className="flex-1 text-left">{presetLabel || 'Select Preset'}</span>
               <span className="text-xs text-text-muted">▼</span>
             </button>
             <AnimatePresence>
@@ -149,6 +156,21 @@ export function Sidebar() {
                       <div className="text-xs text-text-muted pl-6">{p.description}</div>
                     </button>
                   ))}
+                  <button
+                    onClick={() => {
+                      setShowPresetMenu(false);
+                      setShowModelMenu(true);
+                    }}
+                    className={`command-item w-full text-left px-3 py-2 text-sm ${
+                      selectedPreset === OTHER_MODELS_PRESET_ID ? 'text-accent' : 'text-text-secondary'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span>⋯</span>
+                      <span className="font-medium">Other Models</span>
+                    </div>
+                    <div className="text-xs text-text-muted pl-6">Search the broader Puter model ecosystem</div>
+                  </button>
                 </motion.div>
               )}
             </AnimatePresence>
@@ -158,7 +180,7 @@ export function Sidebar() {
           <div className="relative">
             <button
               onClick={() => setShowModelMenu(!showModelMenu)}
-              className="control-surface w-full flex items-center gap-2 px-3 py-2 text-sm text-text-secondary"
+              className="control-surface w-full flex items-center gap-2 px-3 py-2.5 text-[0.9rem] text-text-secondary"
             >
               <span className="flex-1 text-left">{activeModel?.label || 'Select Model'}</span>
               <span className="text-xs text-text-muted">▼</span>
@@ -171,24 +193,16 @@ export function Sidebar() {
                   exit={{ opacity: 0, y: -4 }}
                   className="floating-panel absolute bottom-full left-0 right-0 mb-1 overflow-hidden z-50 max-h-48 overflow-y-auto"
                 >
-                  {modelRegistry.getAll().map((m) => (
-                    <button
-                      key={m.id}
-                      onClick={() => {
-                        setSelectedModel(m.id);
+                  <div className="p-2">
+                    <ModelPicker
+                      selectedModel={selectedModel}
+                      compact
+                      onSelect={(modelId) => {
+                        setSelectedModel(modelId);
                         setShowModelMenu(false);
                       }}
-                      className={`command-item w-full text-left px-3 py-2 text-sm ${
-                        m.id === selectedModel ? 'text-accent' : 'text-text-secondary'
-                      }`}
-                    >
-                      <div className="font-medium">{m.label}</div>
-                      <div className="text-xs text-text-muted">
-                        {m.provider} · {m.tier}
-                        {m.multimodal && ' · multimodal'}
-                      </div>
-                    </button>
-                  ))}
+                    />
+                  </div>
                 </motion.div>
               )}
             </AnimatePresence>

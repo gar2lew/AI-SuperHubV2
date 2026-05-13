@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect, useLayoutEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Send, Square, Paperclip, Image, FileText } from 'lucide-react';
 import { useChatStore } from '@/store/chatStore';
@@ -7,8 +7,11 @@ import { useSettingsStore } from '@/store/settingsStore';
 import { textContent } from '@/lib/utils';
 import { assembleContext } from '@/lib/core/context';
 import { recordFailure } from '@/lib/providers/health';
+import { recordProviderFallbackTransition } from '@/lib/providers/analytics';
 import { resolveRoute } from '@/lib/routing/fallback-router';
 import { recordPuterFallbackEvent } from '@/lib/providers/puter/runtime';
+import { recordClientError } from '@/lib/diagnostics/client-errors';
+import { modelRegistry } from '@/lib/models/registry';
 
 export function MessageInput() {
   const [input, setInput] = useState('');
@@ -17,7 +20,9 @@ export function MessageInput() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const activeConversation = useChatStore((s) => s.getActiveConversation)();
+  const activeConversation = useChatStore((s) =>
+    s.conversations.find((c) => c.id === s.activeConversationId)
+  );
   const addMessage = useChatStore((s) => s.addMessage);
   const startStreaming = useChatStore((s) => s.startStreaming);
   const appendChunk = useChatStore((s) => s.appendChunk);
@@ -27,6 +32,14 @@ export function MessageInput() {
   const isStreaming = useChatStore((s) => s.isStreaming);
   const selectedProvider = useSettingsStore((s) => s.selectedProvider);
   const selectedModel = useSettingsStore((s) => s.selectedModel);
+
+  useEffect(() => {
+    setInput('');
+    setAttachments([]);
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+    }
+  }, [activeConversation?.id]);
 
   const handleSend = useCallback(async () => {
     if ((!input.trim() && attachments.length === 0) || !activeConversation || isStreaming) return;
@@ -61,6 +74,17 @@ export function MessageInput() {
       content: contentParts,
     });
 
+    const selectedModelRecord = modelRegistry.get(selectedModel);
+    if (selectedModelRecord && !selectedModelRecord.capabilities.includes('chat')) {
+      addMessage(activeConversation.id, {
+        role: 'assistant',
+        content: textContent(
+          `${selectedModelRecord.label} does not support chat. Choose a chat-capable model or switch to the matching workspace.`
+        ),
+      });
+      return;
+    }
+
     // Resolve route with fallback support
     const route = resolveRoute(selectedModel, {
       preferredProvider: selectedProvider,
@@ -75,13 +99,17 @@ export function MessageInput() {
       return;
     }
 
+    if (route.usedFallback && selectedProvider !== route.provider.id) {
+      recordProviderFallbackTransition(selectedProvider, route.provider.id);
+    }
+
     const streamId = startStreaming(activeConversation.id, route.provider.id, route.modelId);
     const controller = new AbortController();
     setAbortController(controller);
 
     try {
       const context = assembleContext(activeConversation);
-      const stream = route.provider.stream(context, controller.signal);
+      const stream = route.provider.stream(context, controller.signal, route.modelId);
 
       for await (const chunk of stream) {
         appendChunk(chunk);
@@ -91,6 +119,16 @@ export function MessageInput() {
     } catch (error) {
       const err = error as Error;
       if (err.name !== 'AbortError') {
+        recordClientError({
+          source: 'stream',
+          error: err,
+          context: {
+            providerId: route.provider.id,
+            modelId: route.modelId,
+            streamId,
+            phase: 'primary',
+          },
+        });
         console.error('Stream failed:', err);
         recordFailure(route.provider.id);
 
@@ -99,17 +137,32 @@ export function MessageInput() {
           const fallbackModelId = route.fallbackChain[1];
           const fallbackRoute = resolveRoute(fallbackModelId, { allowFallback: false });
           if (fallbackRoute) {
-            recordPuterFallbackEvent();
+            recordPuterFallbackEvent(route.provider.id, fallbackRoute.provider.id);
+            recordProviderFallbackTransition(route.provider.id, fallbackRoute.provider.id);
             appendChunk({ type: 'status', content: `fallback: ${fallbackRoute.provider.name}` });
             try {
               const context = assembleContext(activeConversation);
-              const fallbackStream = fallbackRoute.provider.stream(context, controller.signal);
+              const fallbackStream = fallbackRoute.provider.stream(
+                context,
+                controller.signal,
+                fallbackRoute.modelId
+              );
               for await (const chunk of fallbackStream) {
                 appendChunk(chunk);
               }
               finalizeStream(activeConversation.id, streamId);
               return;
             } catch (fallbackErr) {
+              recordClientError({
+                source: 'stream',
+                error: fallbackErr,
+                context: {
+                  providerId: fallbackRoute.provider.id,
+                  modelId: fallbackRoute.modelId,
+                  streamId,
+                  phase: 'fallback',
+                },
+              });
               recordFailure(fallbackRoute.provider.id);
             }
           }
@@ -172,17 +225,28 @@ export function MessageInput() {
     e.target.value = '';
   };
 
-  const adjustTextareaHeight = () => {
+  const adjustTextareaHeight = useCallback(() => {
     const el = textareaRef.current;
     if (el) {
       el.style.height = 'auto';
-      el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
+      const maxHeight = window.matchMedia('(max-width: 759px)').matches ? 132 : 200;
+      el.style.height = `${Math.min(el.scrollHeight, maxHeight)}px`;
     }
+  }, []);
+
+  useLayoutEffect(() => {
+    adjustTextareaHeight();
+  }, [adjustTextareaHeight, input]);
+
+  const handleTextareaFocus = () => {
+    window.setTimeout(() => {
+      textareaRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }, 80);
   };
 
   return (
     <div
-      className="composer-shell relative px-3 py-3 sm:px-4"
+      className="composer-shell relative px-3 py-3 sm:px-5"
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
@@ -219,8 +283,8 @@ export function MessageInput() {
         </div>
       )}
 
-      <div className="max-w-3xl mx-auto">
-        <div className="composer-input relative flex items-end gap-2 px-3 py-2">
+      <div className="chat-width mx-auto">
+        <div className="composer-input relative flex items-end gap-2.5 px-3 py-2.5">
           <input
             id="message-attachments"
             ref={fileInputRef}
@@ -244,12 +308,12 @@ export function MessageInput() {
             value={input}
             onChange={(e) => {
               setInput(e.target.value);
-              adjustTextareaHeight();
             }}
             onKeyDown={handleKeyDown}
+            onFocus={handleTextareaFocus}
             placeholder="Message your AI assistant..."
             rows={1}
-            className="flex-1 bg-transparent text-sm text-text-primary placeholder:text-text-muted resize-none outline-none py-2 max-h-[200px] min-h-[20px]"
+            className="flex-1 bg-transparent text-base leading-6 text-text-primary placeholder:text-text-muted resize-none outline-none py-2 max-h-[200px] min-h-6"
             disabled={isStreaming}
             aria-label="Message input"
           />
@@ -276,7 +340,7 @@ export function MessageInput() {
           )}
         </div>
 
-        <p className="text-center text-[10px] text-text-muted mt-1.5">
+        <p className="text-center text-xs text-text-muted mt-1.5">
           {isStreaming ? 'Generating response...' : 'Press Enter to send, Shift+Enter for new line'}
         </p>
       </div>
