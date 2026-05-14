@@ -5,6 +5,7 @@ import { CAPABILITY_LABELS } from '@/lib/models/capabilities';
 import { getModelMetadata } from '@/lib/models/metadata';
 import { modelRegistry } from '@/lib/models/registry';
 import { formatProviderError } from '@/lib/providers/errors';
+import { resetPuterConnectionStateForRetry } from '@/lib/providers/puter/runtime';
 import type { NormalizedImageArtifact } from '@/lib/providers/puter/normalize';
 
 const DEFAULT_IMAGE_MODEL = 'gpt-image-1-mini';
@@ -24,6 +25,7 @@ export function ImageWorkspace() {
 
   const generate = async () => {
     if (!prompt.trim() || isGenerating) return;
+    resetPuterConnectionStateForRetry();
     const controller = new AbortController();
     abortControllerRef.current = controller;
     setIsGenerating(true);
@@ -117,8 +119,16 @@ export function ImageWorkspace() {
       </div>
 
       {error && (
-        <div className="control-surface border-error/30 px-3 py-2 text-sm text-error" role="alert">
-          {error}
+        <div className="control-surface flex flex-wrap items-center justify-between gap-2 border-error/30 px-3 py-2 text-sm text-error" role="alert">
+          <span>{error}</span>
+          <button
+            type="button"
+            onClick={generate}
+            disabled={!prompt.trim() || isGenerating}
+            className="rounded-md border border-error/30 px-2 py-1 text-xs font-medium hover:bg-error/10 disabled:opacity-50"
+          >
+            Retry
+          </button>
         </div>
       )}
 

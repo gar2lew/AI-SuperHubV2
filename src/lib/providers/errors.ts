@@ -14,6 +14,10 @@ export function formatProviderError(error: unknown, fallback = 'Provider request
     return 'This provider requires a browser runtime.';
   }
 
+  if (message.includes('websocket') || message.includes('socket') || message.includes('disconnect') || message.includes('network')) {
+    return 'The provider connection was interrupted. You can retry when the connection recovers.';
+  }
+
   if (message.includes('auth') || message.includes('sign') || message.includes('permission')) {
     return 'Puter needs an authenticated session or permission before this request can run.';
   }

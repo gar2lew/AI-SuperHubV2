@@ -18,7 +18,13 @@ import {
   normalizeTTSResponse,
 } from "@/lib/providers/puter/normalize";
 import { getPuterProviderStatus } from "@/lib/providers/puter";
-import { recordPuterFallbackEvent, resetPuterRuntimeForTests } from "@/lib/providers/puter/runtime";
+import { puterStream } from "@/lib/providers/puter/chat";
+import {
+  recordPuterFallbackEvent,
+  resetPuterConnectionStateForRetry,
+  resetPuterRuntimeForTests,
+} from "@/lib/providers/puter/runtime";
+import { waitForPuter } from "@/lib/providers/puter";
 import { streamImageGeneration } from "@/lib/providers/puter/image";
 import { getLastRoutingDiagnostics, resolveRoute } from "@/lib/routing/fallback-router";
 import { getRuntimeTelemetrySnapshot, resetRuntimeTelemetry } from "@/lib/telemetry/runtimeTelemetry";
@@ -157,6 +163,48 @@ describe("Puter normalization", () => {
       },
     });
   });
+
+  it("normalizes internal Puter chat IDs before provider execution", async () => {
+    const calls: unknown[] = [];
+    window.puter = {
+      ai: {
+        chat: (_messages: unknown, options: unknown) => {
+          calls.push(options);
+          return {
+            async *[Symbol.asyncIterator]() {
+              yield { text: "ok" };
+              yield { done: true };
+            },
+          };
+        },
+      },
+    };
+
+    const chunks = [];
+    for await (const chunk of puterStream(messages, undefined, "puter-claude-sonnet-4")) {
+      chunks.push(chunk);
+    }
+
+    expect(calls).toEqual([
+      expect.objectContaining({
+        model: "claude-sonnet-4",
+        stream: true,
+      }),
+    ]);
+    expect(chunks.some((chunk) => chunk.type === "text" && chunk.content === "ok")).toBe(true);
+  });
+
+  it("rejects malformed Puter runtime mappings before provider execution", async () => {
+    const chat = vi.fn();
+    window.puter = { ai: { chat } };
+
+    await expect(async () => {
+      for await (const _chunk of puterStream(messages, undefined, "puter-missing-runtime")) {
+        // Exhaust the generator so provider setup runs.
+      }
+    }).rejects.toThrow(/Missing runtime model mapping/);
+    expect(chat).not.toHaveBeenCalled();
+  });
 });
 
 describe("provider routing and diagnostics state", () => {
@@ -191,9 +239,28 @@ describe("provider routing and diagnostics state", () => {
 
     expect(route).toMatchObject({
       modelId: "puter-gpt-5",
+      runtimeModelId: "gpt-5",
       usedFallback: false,
     });
     expect(route?.provider.id).toBe("puter");
+  });
+
+  it("exposes internal and runtime IDs in routing diagnostics", () => {
+    const route = resolveRoute("puter-claude-sonnet-4", {
+      preferredProvider: "puter",
+      respectHealth: false,
+    });
+
+    expect(route).toMatchObject({
+      modelId: "puter-claude-sonnet-4",
+      runtimeModelId: "claude-sonnet-4",
+    });
+    expect(getLastRoutingDiagnostics()).toMatchObject({
+      requestedModelId: "puter-claude-sonnet-4",
+      resolvedModelId: "puter-claude-sonnet-4",
+      resolvedRuntimeModelId: "claude-sonnet-4",
+      resolvedProviderId: "puter",
+    });
   });
 
   it("uses the safe fallback route when provider health would otherwise collapse routing", () => {
@@ -287,6 +354,31 @@ describe("provider routing and diagnostics state", () => {
       ready: false,
       timeoutEvents: 0,
       activeStreamId: null,
+    });
+  });
+
+  it("tracks runtime connection degradation and retry reset state", async () => {
+    window.puter = {
+      ai: {
+        chat: () => Promise.resolve("ok"),
+      },
+      auth: {
+        getUser: () => Promise.resolve({ username: "test" }),
+      },
+    };
+
+    await waitForPuter();
+    window.dispatchEvent(new ErrorEvent("error", { message: "WebSocket connection closed" }));
+
+    expect(getPuterProviderStatus().runtime).toMatchObject({
+      connectionState: "reconnecting",
+      websocketFailures: 1,
+    });
+
+    resetPuterConnectionStateForRetry();
+    expect(getPuterProviderStatus().runtime).toMatchObject({
+      connectionState: "reconnecting",
+      error: null,
     });
   });
 

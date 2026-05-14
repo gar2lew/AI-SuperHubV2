@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react';
 import { motion } from 'framer-motion';
-import { User, Bot, Copy, Check, Clock, Volume2, Loader2, AlertCircle } from 'lucide-react';
+import { User, Bot, Copy, Check, Clock, Volume2, Loader2, AlertCircle, RotateCcw } from 'lucide-react';
 import type { Message } from '@/types';
 import { useSettingsStore } from '@/store/settingsStore';
 import { formatTimestamp, copyMessageContent } from '@/lib/utils';
@@ -61,7 +61,17 @@ export function MessageBubble({ message, isStreaming, grouped }: MessageBubblePr
     }
   };
 
+  const handleRetry = () => {
+    if (!message.metadata?.retryPrompt) return;
+    window.dispatchEvent(
+      new CustomEvent('ai-superhub:retry-chat', {
+        detail: { prompt: message.metadata.retryPrompt },
+      })
+    );
+  };
+
   const hasReasoning = !!message.metadata?.reasoning;
+  const canRetry = isAssistant && message.metadata?.retryable && message.metadata.retryPrompt;
 
   return (
     <article
@@ -163,6 +173,18 @@ export function MessageBubble({ message, isStreaming, grouped }: MessageBubblePr
           {/* Reasoning trace */}
           {hasReasoning && message.metadata?.reasoning && (
             <ReasoningRenderer reasoning={message.metadata.reasoning} />
+          )}
+
+          {canRetry && (
+            <button
+              type="button"
+              onClick={handleRetry}
+              className="mt-3 inline-flex items-center gap-1.5 rounded-md border border-warning/30 bg-warning/10 px-2.5 py-1.5 text-xs font-medium text-warning hover:bg-warning/15"
+              aria-label="Retry failed request"
+            >
+              <RotateCcw size={13} />
+              Retry
+            </button>
           )}
 
           {/* Streaming cursor */}

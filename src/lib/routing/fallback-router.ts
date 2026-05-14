@@ -8,6 +8,7 @@ const SAFE_FALLBACK_MODEL_ID = 'ollama-llama-maverick';
 export interface RoutingResult {
   provider: AIProvider;
   modelId: string;
+  runtimeModelId: string;
   usedFallback: boolean;
   fallbackChain: string[];
 }
@@ -20,7 +21,10 @@ export interface RouteRejection {
     | 'provider-missing'
     | 'provider-disabled'
     | 'provider-config-unavailable'
-    | 'provider-unhealthy';
+    | 'provider-unhealthy'
+    | 'runtime-id-missing'
+    | 'runtime-id-malformed'
+    | 'provider-mismatch';
 }
 
 export interface RoutingDiagnostics {
@@ -28,6 +32,7 @@ export interface RoutingDiagnostics {
   preferredProvider?: string;
   fallbackChain: string[];
   resolvedModelId?: string;
+  resolvedRuntimeModelId?: string;
   resolvedProviderId?: string;
   usedFallback: boolean;
   safeFallbackUsed: boolean;
@@ -72,6 +77,7 @@ function commitDiagnostics(diagnostics: RoutingDiagnostics, route: RoutingResult
   lastRoutingDiagnostics = {
     ...diagnostics,
     resolvedModelId: route?.modelId,
+    resolvedRuntimeModelId: route?.runtimeModelId,
     resolvedProviderId: route?.provider.id,
     usedFallback: route?.usedFallback ?? false,
   };
@@ -119,8 +125,9 @@ export function resolveRoute(
         : model.provider;
     const provider = getProvider(providerId);
     const providerRejection = rejectionForProvider(id, providerId);
+    const runtimeResolution = modelRegistry.resolveRuntimeModelId(id, providerId);
 
-    if (provider && !providerRejection) {
+    if (provider && !providerRejection && runtimeResolution.valid && runtimeResolution.runtimeId) {
       // Health check
       if (opts.respectHealth && !isHealthy(provider.id)) {
         diagnostics.rejections.push({ modelId: id, providerId: provider.id, reason: 'provider-unhealthy' });
@@ -134,6 +141,7 @@ export function resolveRoute(
       const route = {
         provider,
         modelId: model.id,
+        runtimeModelId: runtimeResolution.runtimeId,
         usedFallback: id !== modelId || usedProviderFallback,
         fallbackChain: id === SAFE_FALLBACK_MODEL_ID ? chain : baseChain,
       };
@@ -141,19 +149,30 @@ export function resolveRoute(
       return route;
     }
     if (providerRejection) diagnostics.rejections.push(providerRejection);
+    if (!runtimeResolution.valid) {
+      diagnostics.rejections.push({
+        modelId: id,
+        providerId,
+        reason: runtimeResolution.reason ?? 'runtime-id-missing',
+      });
+    }
 
     // If preferred provider doesn't work, try the model's native provider
     if (opts.preferredProvider && opts.preferredProvider !== model.provider) {
       const nativeProvider = getProvider(model.provider);
       const nativeRejection = rejectionForProvider(id, model.provider);
+      const nativeRuntimeResolution = modelRegistry.resolveRuntimeModelId(id, model.provider);
       if (
         nativeProvider &&
         !nativeRejection &&
+        nativeRuntimeResolution.valid &&
+        nativeRuntimeResolution.runtimeId &&
         (!opts.respectHealth || isHealthy(nativeProvider.id))
       ) {
         const route = {
           provider: nativeProvider,
           modelId: model.id,
+          runtimeModelId: nativeRuntimeResolution.runtimeId,
           usedFallback: true,
           fallbackChain: id === SAFE_FALLBACK_MODEL_ID ? chain : baseChain,
         };
@@ -161,6 +180,13 @@ export function resolveRoute(
         return route;
       }
       if (nativeRejection) diagnostics.rejections.push(nativeRejection);
+      if (!nativeRuntimeResolution.valid) {
+        diagnostics.rejections.push({
+          modelId: id,
+          providerId: model.provider,
+          reason: nativeRuntimeResolution.reason ?? 'runtime-id-missing',
+        });
+      }
     }
 
     if (!opts.allowFallback) break;
@@ -169,10 +195,19 @@ export function resolveRoute(
   const safeModel = modelRegistry.get(SAFE_FALLBACK_MODEL_ID);
   const safeProvider = safeModel ? getProvider(safeModel.provider) : undefined;
   const safeRejection = safeModel ? rejectionForProvider(SAFE_FALLBACK_MODEL_ID, safeModel.provider) : null;
-  if (opts.allowFallback && safeModel && safeProvider && !safeRejection) {
+  const safeRuntimeResolution = modelRegistry.resolveRuntimeModelId(SAFE_FALLBACK_MODEL_ID, safeModel?.provider);
+  if (
+    opts.allowFallback &&
+    safeModel &&
+    safeProvider &&
+    !safeRejection &&
+    safeRuntimeResolution.valid &&
+    safeRuntimeResolution.runtimeId
+  ) {
     const route = {
       provider: safeProvider,
       modelId: safeModel.id,
+      runtimeModelId: safeRuntimeResolution.runtimeId,
       usedFallback: true,
       fallbackChain: chain,
     };
@@ -180,6 +215,13 @@ export function resolveRoute(
     return route;
   }
   if (safeRejection) diagnostics.rejections.push(safeRejection);
+  if (!safeRuntimeResolution.valid) {
+    diagnostics.rejections.push({
+      modelId: SAFE_FALLBACK_MODEL_ID,
+      providerId: safeModel?.provider,
+      reason: safeRuntimeResolution.reason ?? 'runtime-id-missing',
+    });
+  }
   commitDiagnostics(diagnostics, null);
   return null;
 }
@@ -212,6 +254,7 @@ export function getAvailableRoutes(modelId: string): RoutingResult[] {
       results.push({
         provider,
         modelId: model.id,
+        runtimeModelId: modelRegistry.resolveRuntimeModelId(model.id, model.provider).runtimeId ?? model.id,
         usedFallback: id !== modelId,
         fallbackChain: chain,
       });
@@ -245,6 +288,7 @@ export function getNextHealthyFallback(
       return {
         provider,
         modelId: model.id,
+        runtimeModelId: modelRegistry.resolveRuntimeModelId(model.id, model.provider).runtimeId ?? model.id,
         usedFallback: true,
         fallbackChain,
       };

@@ -24,7 +24,13 @@ interface ChatState {
   renameConversation: (id: string, title: string) => void;
   addMessage: (conversationId: string, message: Omit<Message, 'id' | 'createdAt'>) => void;
   updateMessage: (conversationId: string, messageId: string, updates: Partial<Message>) => void;
-  startStreaming: (conversationId: string, providerId: string, modelId: string) => string;
+  startStreaming: (
+    conversationId: string,
+    providerId: string,
+    modelId: string,
+    runtimeModelId?: string,
+    retryPrompt?: string
+  ) => string;
   appendChunk: (chunk: AIChunk) => void;
   finalizeStream: (conversationId: string, streamId: string) => void;
   stopStreaming: () => void;
@@ -176,7 +182,7 @@ export const useChatStore = create<ChatState>()(
         }));
       },
 
-      startStreaming: (conversationId, providerId, modelId) => {
+      startStreaming: (conversationId, providerId, modelId, runtimeModelId, retryPrompt) => {
         const streamId = generateStreamId();
 
         const engine = new StreamEngine(
@@ -236,6 +242,10 @@ export const useChatStore = create<ChatState>()(
                   metadata: {
                     provider: providerId,
                     model: modelId,
+                    runtimeModel: runtimeModelId,
+                    retryable: true,
+                    retryPrompt,
+                    failureKind: 'provider',
                   },
                 });
               }
@@ -261,6 +271,10 @@ export const useChatStore = create<ChatState>()(
                 metadata: {
                   provider: providerId,
                   model: modelId,
+                  runtimeModel: runtimeModelId,
+                  retryable: true,
+                  retryPrompt,
+                  failureKind: 'timeout',
                 },
               });
               get().finalizeStream(conversationId, streamId);
@@ -286,6 +300,8 @@ export const useChatStore = create<ChatState>()(
                     startedAt: Date.now(),
                     providerId,
                     modelId,
+                    runtimeModelId,
+                    retryPrompt,
                     streamId,
                     lastSequence: -1,
                   },
@@ -327,6 +343,7 @@ export const useChatStore = create<ChatState>()(
             metadata: {
               provider: streaming?.providerId,
               model: streaming?.modelId,
+              runtimeModel: streaming?.runtimeModelId,
               latencyMs: streaming ? Date.now() - streaming.startedAt : undefined,
             },
           });

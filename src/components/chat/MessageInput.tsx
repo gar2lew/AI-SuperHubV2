@@ -9,7 +9,7 @@ import { assembleContext } from '@/lib/core/context';
 import { recordFailure } from '@/lib/providers/health';
 import { recordProviderFallbackTransition } from '@/lib/providers/analytics';
 import { resolveRoute } from '@/lib/routing/fallback-router';
-import { recordPuterFallbackEvent } from '@/lib/providers/puter/runtime';
+import { recordPuterFallbackEvent, resetPuterConnectionStateForRetry } from '@/lib/providers/puter/runtime';
 import { recordClientError } from '@/lib/diagnostics/client-errors';
 import { modelRegistry } from '@/lib/models/registry';
 import { formatProviderError } from '@/lib/providers/errors';
@@ -41,6 +41,19 @@ export function MessageInput() {
       textareaRef.current.style.height = 'auto';
     }
   }, [activeConversation?.id]);
+
+  useEffect(() => {
+    const handleRetry = (event: Event) => {
+      const prompt = (event as CustomEvent<{ prompt?: string }>).detail?.prompt;
+      if (!prompt) return;
+      resetPuterConnectionStateForRetry();
+      setInput(prompt);
+      requestAnimationFrame(() => textareaRef.current?.focus());
+    };
+
+    window.addEventListener('ai-superhub:retry-chat', handleRetry);
+    return () => window.removeEventListener('ai-superhub:retry-chat', handleRetry);
+  }, []);
 
   const handleSend = useCallback(async () => {
     if ((!input.trim() && attachments.length === 0) || !activeConversation || isStreaming) return;
@@ -115,13 +128,19 @@ export function MessageInput() {
       recordProviderFallbackTransition(selectedProvider, route.provider.id);
     }
 
-    const streamId = startStreaming(activeConversation.id, route.provider.id, route.modelId);
+    const streamId = startStreaming(
+      activeConversation.id,
+      route.provider.id,
+      route.modelId,
+      route.runtimeModelId,
+      userText
+    );
     const controller = new AbortController();
     setAbortController(controller);
 
     try {
       const context = assembleContext(conversationWithPendingMessage);
-      const stream = route.provider.stream(context, controller.signal, route.modelId);
+      const stream = route.provider.stream(context, controller.signal, route.runtimeModelId);
 
       for await (const chunk of stream) {
         appendChunk(chunk);
@@ -157,7 +176,7 @@ export function MessageInput() {
               const fallbackStream = fallbackRoute.provider.stream(
                 context,
                 controller.signal,
-                fallbackRoute.modelId
+                fallbackRoute.runtimeModelId
               );
               for await (const chunk of fallbackStream) {
                 appendChunk(chunk);

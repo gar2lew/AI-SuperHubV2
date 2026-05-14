@@ -90,6 +90,12 @@ export function DiagnosticsTab() {
               <span className="text-text-secondary">{routeDiagnostics.resolvedProviderId ?? 'none'}</span>
             </div>
             <div className="flex justify-between">
+              <span className="text-text-muted">Runtime ID</span>
+              <span className="max-w-[150px] truncate text-text-secondary">
+                {routeDiagnostics.resolvedRuntimeModelId ?? 'none'}
+              </span>
+            </div>
+            <div className="flex justify-between">
               <span className="text-text-muted">Fallback</span>
               <span className={routeDiagnostics.usedFallback ? 'text-warning' : 'text-success'}>
                 {routeDiagnostics.safeFallbackUsed ? 'safe' : routeDiagnostics.usedFallback ? 'yes' : 'no'}
@@ -130,9 +136,13 @@ export function DiagnosticsTab() {
             <span className="text-text-secondary">{puterStatus.readiness}</span>
           </div>
           <div className="flex justify-between">
+            <span className="text-text-muted">Connection</span>
+            <span className="text-text-secondary">{puterStatus.runtime.connectionState}</span>
+          </div>
+          <div className="flex justify-between">
             <span className="text-text-muted">Auth</span>
             <span className="text-text-secondary">
-              {puterStatus.runtime.authenticated ? 'Signed in' : 'Unknown'}
+              {puterStatus.runtime.authState}
             </span>
           </div>
           {puterStatus.runtime.error && (
@@ -143,6 +153,14 @@ export function DiagnosticsTab() {
           <div className="flex justify-between">
             <span className="text-text-muted">Timeouts</span>
             <span className="text-text-secondary">{puterStatus.runtime.timeoutEvents}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-text-muted">Reconnects</span>
+            <span className="text-text-secondary">{puterStatus.runtime.reconnectAttempts}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-text-muted">WS failures</span>
+            <span className="text-text-secondary">{puterStatus.runtime.websocketFailures}</span>
           </div>
           <div className="flex justify-between">
             <span className="text-text-muted">Fallbacks</span>
@@ -175,6 +193,10 @@ export function DiagnosticsTab() {
             <div className="flex justify-between">
               <span className="text-text-muted">Model</span>
               <span className="text-text-secondary">{streaming.modelId}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-text-muted">Runtime ID</span>
+              <span className="text-text-secondary">{streaming.runtimeModelId ?? streaming.modelId}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-text-muted">Duration</span>

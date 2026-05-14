@@ -42,6 +42,7 @@ export function getModelMetadata(model: AIModel): ModelMetadata {
 
   return {
     id: model.id,
+    runtimeId: model.runtimeId,
     providerName: PROVIDER_NAMES[model.provider] ?? model.provider,
     modelName: model.label,
     category,

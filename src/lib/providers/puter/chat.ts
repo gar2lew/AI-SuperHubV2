@@ -1,7 +1,10 @@
 import type { Message, AIChunk } from '@/types';
 import { findLast } from '@/lib/utils';
+import { resolveProviderRuntimeModelId } from '@/lib/models/runtime-ids';
 import { normalizePuterChunk, normalizePuterResponse } from './normalize';
 import { safePuterChat, setActivePuterStream } from './runtime';
+
+const DEFAULT_PUTER_CHAT_MODEL = 'gpt-4o';
 
 export async function mockChat(messages: Message[]): Promise<string> {
   const lastUser = findLast(messages, (m: Message) => m.role === 'user');
@@ -51,7 +54,7 @@ export async function* puterStream(
 
   try {
     const stream = await safePuterChat(messages, {
-      model: modelId || 'gpt-4o',
+      model: resolveProviderRuntimeModelId(modelId, 'puter', DEFAULT_PUTER_CHAT_MODEL),
       stream: true,
     });
 
@@ -78,7 +81,7 @@ export async function* puterStream(
 
 export async function puterChat(messages: Message[], modelId?: string): Promise<string> {
   const response = await safePuterChat(messages, {
-    model: modelId || 'gpt-4o',
+    model: resolveProviderRuntimeModelId(modelId, 'puter', DEFAULT_PUTER_CHAT_MODEL),
     stream: false,
   });
 

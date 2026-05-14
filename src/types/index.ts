@@ -106,6 +106,7 @@ export interface ToolCall {
 export interface MessageMetadata {
   provider?: string;
   model?: string;
+  runtimeModel?: string;
   preset?: string;
   reasoning?: string;
   toolCalls?: ToolCall[];
@@ -113,6 +114,9 @@ export interface MessageMetadata {
   latencyMs?: number;
   tokensIn?: number;
   tokensOut?: number;
+  retryable?: boolean;
+  retryPrompt?: string;
+  failureKind?: 'timeout' | 'provider' | 'network';
 }
 
 // --------------------------------------------------
@@ -150,6 +154,8 @@ export interface Conversation {
     startedAt: number;
     providerId: string;
     modelId: string;
+    runtimeModelId?: string;
+    retryPrompt?: string;
     streamId?: string;
     lastSequence?: number;
   };
@@ -178,6 +184,7 @@ export type ModelTier = 'fast' | 'balanced' | 'advanced' | 'reasoning';
 
 export interface AIModel {
   id: string;
+  runtimeId?: string;
   label: string;
   provider: string;
   capabilities: Capability[];
@@ -201,6 +208,7 @@ export type ModelProviderCategory =
 
 export interface ModelMetadata {
   id: string;
+  runtimeId?: string;
   providerName: string;
   modelName: string;
   category: ModelProviderCategory;

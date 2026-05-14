@@ -1,5 +1,6 @@
 import type { ContentPart } from '@/types';
 import { recordClientError } from '@/lib/diagnostics/client-errors';
+import { resolveProviderRuntimeModelId } from '@/lib/models/runtime-ids';
 import { recordFailure, recordSuccess } from '@/lib/providers/health';
 import { normalizeImageResponse, normalizeVisionResponse } from './normalize';
 import { safePuterChat, safePuterImage } from './runtime';
@@ -77,6 +78,9 @@ async function requestPuterImage(prompt: string, options: ImageGenerationOptions
   const { abortSignal, width, height, ...puterOptions } = options;
   const requestOptions: Record<string, unknown> = {
     ...puterOptions,
+    ...(typeof puterOptions.model === 'string'
+      ? { model: resolveProviderRuntimeModelId(puterOptions.model, 'puter', 'gpt-image-1-mini') }
+      : {}),
     ...(typeof width === 'number' && typeof height === 'number' ? { ratio: { w: width, h: height } } : {}),
   };
 

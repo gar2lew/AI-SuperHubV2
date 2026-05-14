@@ -1,5 +1,29 @@
 import type { AIModel, Capability, ModelTier } from '@/types';
 
+const RUNTIME_MODEL_IDS: Record<string, string> = {
+  'puter-gpt-5': 'gpt-5',
+  'puter-claude-sonnet-4': 'claude-sonnet-4',
+  'openai-gpt-5': 'gpt-5',
+  'openai-gpt-4o': 'gpt-4o',
+  'anthropic-claude-sonnet-4': 'claude-sonnet-4',
+  'anthropic-claude-opus-4': 'claude-opus-4',
+  'ollama-llama-maverick': 'llama-maverick',
+  'ollama-deepseek-v4': 'deepseek-v4',
+  'openrouter-gpt-5': 'gpt-5',
+  'openrouter-claude-sonnet-4': 'claude-sonnet-4',
+  'openrouter-deepseek-v4': 'deepseek-v4',
+};
+
+const MALFORMED_RUNTIME_ID = /^(puter|openai|anthropic|ollama|openrouter)-/;
+
+export interface RuntimeModelResolution {
+  internalId: string;
+  runtimeId: string | null;
+  providerId?: string;
+  valid: boolean;
+  reason?: 'model-missing' | 'runtime-id-missing' | 'runtime-id-malformed' | 'provider-mismatch';
+}
+
 const PUTER_ECOSYSTEM_MODELS: AIModel[] = [
   {
     id: 'moonshotai/kimi-k2-instruct',
@@ -385,7 +409,12 @@ class ModelRegistry {
   private models = new Map<string, AIModel>();
 
   constructor() {
-    MODELS.forEach((m) => this.models.set(m.id, m));
+    MODELS.forEach((m) => {
+      this.models.set(m.id, {
+        ...m,
+        runtimeId: m.runtimeId ?? RUNTIME_MODEL_IDS[m.id] ?? m.id,
+      });
+    });
   }
 
   get(id: string): AIModel | undefined {
@@ -442,6 +471,56 @@ class ModelRegistry {
     }
 
     return chain;
+  }
+
+  resolveRuntimeModelId(modelId: string, providerId?: string): RuntimeModelResolution {
+    const model = this.get(modelId);
+    if (!model) {
+      return {
+        internalId: modelId,
+        runtimeId: null,
+        providerId,
+        valid: false,
+        reason: 'model-missing',
+      };
+    }
+
+    if (providerId && model.provider !== providerId) {
+      return {
+        internalId: modelId,
+        runtimeId: model.runtimeId ?? null,
+        providerId,
+        valid: false,
+        reason: 'provider-mismatch',
+      };
+    }
+
+    if (!model.runtimeId) {
+      return {
+        internalId: modelId,
+        runtimeId: null,
+        providerId: model.provider,
+        valid: false,
+        reason: 'runtime-id-missing',
+      };
+    }
+
+    if (model.provider === 'puter' && MALFORMED_RUNTIME_ID.test(model.runtimeId)) {
+      return {
+        internalId: modelId,
+        runtimeId: model.runtimeId,
+        providerId: model.provider,
+        valid: false,
+        reason: 'runtime-id-malformed',
+      };
+    }
+
+    return {
+      internalId: modelId,
+      runtimeId: model.runtimeId,
+      providerId: model.provider,
+      valid: true,
+    };
   }
 }
 

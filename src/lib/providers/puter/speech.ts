@@ -1,20 +1,22 @@
 import type { AIChunk } from '@/types';
+import { resolveProviderRuntimeModelId } from '@/lib/models/runtime-ids';
 import { normalizePuterResponse, normalizeTTSResponse } from './normalize';
 import { safePuterSTT, safePuterTTS } from './runtime';
 
 export interface SpeechOptions {
   voice?: string;
+  model?: string;
 }
 
 export async function textToSpeech(text: string, options: SpeechOptions = {}): Promise<Blob> {
-  const artifact = normalizeTTSResponse(await safePuterTTS(text, { ...options }), options.voice);
+  const artifact = normalizeTTSResponse(await safePuterTTS(text, normalizeSpeechOptions(options)), options.voice);
   if (artifact.blob) return artifact.blob;
   const response = await fetch(artifact.url);
   return response.blob();
 }
 
 export async function textToSpeechArtifact(text: string, options: SpeechOptions = {}) {
-  return normalizeTTSResponse(await safePuterTTS(text, { ...options }), options.voice);
+  return normalizeTTSResponse(await safePuterTTS(text, normalizeSpeechOptions(options)), options.voice);
 }
 
 export async function speechToText(audio: Blob): Promise<string> {
@@ -30,4 +32,13 @@ export async function* streamSpeechToText(audio: Blob): AsyncGenerator<AIChunk> 
   const text = await speechToText(audio);
   if (text) yield { type: 'text', content: text };
   yield { type: 'status', content: 'done' };
+}
+
+function normalizeSpeechOptions(options: SpeechOptions): Record<string, unknown> {
+  return {
+    ...options,
+    ...(options.model
+      ? { model: resolveProviderRuntimeModelId(options.model, 'puter', options.model) }
+      : {}),
+  };
 }
