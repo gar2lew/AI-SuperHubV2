@@ -225,6 +225,11 @@ export function isPuterAvailable() {
 }
 
 export function getPuterReadiness() {
+  if (runtimeState.status === 'cooldown' && (!runtimeState.cooldownUntil || runtimeState.cooldownUntil <= now())) {
+    runtimeState.status = runtimeState.loaded ? 'ready' : 'idle';
+    runtimeState.ready = runtimeState.loaded;
+    runtimeState.loading = false;
+  }
   return runtimeState.status;
 }
 

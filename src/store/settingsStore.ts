@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { Settings, ProviderId } from '@/types';
-import { DEFAULT_PRESET_ID, OTHER_MODELS_PRESET_ID, resolvePresetToModel } from '@/lib/models/presets';
+import { DEFAULT_PRESET_ID, OTHER_MODELS_PRESET_ID, getPreset, resolvePresetToModel } from '@/lib/models/presets';
 import { modelRegistry } from '@/lib/models/registry';
 
 export type WorkspaceId = 'chat' | 'coding' | 'image' | 'voice' | 'terminal';
@@ -69,6 +69,35 @@ function providerOrDefault(provider: string | undefined): ProviderId {
 }
 
 const defaultSelectedProvider = providerOrDefault(defaultModelProvider);
+
+function isWorkspaceId(workspace: unknown): workspace is WorkspaceId {
+  return ['chat', 'coding', 'image', 'voice', 'terminal'].includes(String(workspace));
+}
+
+export function sanitizeHydratedSettings(state: Partial<SettingsState>): Partial<SettingsState> {
+  const presetCandidate =
+    typeof state.selectedPreset === 'string' &&
+    (state.selectedPreset === OTHER_MODELS_PRESET_ID || getPreset(state.selectedPreset))
+      ? state.selectedPreset
+      : DEFAULT_PRESET_ID;
+  const modelCandidate =
+    typeof state.selectedModel === 'string' && modelRegistry.get(state.selectedModel)
+      ? state.selectedModel
+      : presetCandidate === OTHER_MODELS_PRESET_ID
+        ? defaultModelId
+        : resolvePresetToModel(presetCandidate);
+  const model = modelRegistry.get(modelCandidate);
+  const selectedModel = model ? modelCandidate : defaultModelId;
+  const selectedProvider = providerOrDefault(modelRegistry.get(selectedModel)?.provider ?? state.selectedProvider);
+
+  return {
+    ...state,
+    selectedPreset: presetCandidate,
+    selectedModel,
+    selectedProvider,
+    activeWorkspace: isWorkspaceId(state.activeWorkspace) ? state.activeWorkspace : 'chat',
+  };
+}
 
 export const useSettingsStore = create<SettingsState>()(
   persist(
@@ -155,6 +184,10 @@ export const useSettingsStore = create<SettingsState>()(
     }),
     {
       name: 'ai-workstation-settings',
+      merge: (persisted, current) => ({
+        ...current,
+        ...sanitizeHydratedSettings(persisted as Partial<SettingsState>),
+      }),
       partialize: (state) => ({
         theme: state.theme,
         sidebarCollapsed: state.sidebarCollapsed,

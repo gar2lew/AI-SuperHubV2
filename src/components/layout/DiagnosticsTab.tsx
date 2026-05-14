@@ -22,6 +22,7 @@ import { getRuntimeTelemetrySnapshot } from '@/lib/telemetry/runtimeTelemetry';
 import { CAPABILITY_LABELS } from '@/lib/models/capabilities';
 import { getModelMetadata } from '@/lib/models/metadata';
 import { modelRegistry } from '@/lib/models/registry';
+import { getLastRoutingDiagnostics } from '@/lib/routing/fallback-router';
 
 export function DiagnosticsTab() {
   const activeConversation = useChatStore((s) =>
@@ -38,6 +39,7 @@ export function DiagnosticsTab() {
     ])
   ).sort();
   const puterStatus = getPuterProviderStatus();
+  const routeDiagnostics = getLastRoutingDiagnostics();
   const diagnostics = useChatStore((s) => s.streamEngine?.getDiagnostics());
   const clientErrors = useSyncExternalStore(
     subscribeClientErrors,
@@ -65,6 +67,51 @@ export function DiagnosticsTab() {
       </div>
 
       <DeploymentStatus />
+
+      {routeDiagnostics && (
+        <div className="telemetry-card p-3">
+          <h4 className="text-xs font-semibold text-text-primary uppercase tracking-wider mb-2 flex items-center gap-1.5">
+            <Activity size={12} className="text-accent" />
+            Route Resolution
+          </h4>
+          <div className="space-y-1.5 text-xs">
+            <div className="flex justify-between">
+              <span className="text-text-muted">Requested</span>
+              <span className="max-w-[150px] truncate text-text-secondary">{routeDiagnostics.requestedModelId}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-text-muted">Resolved</span>
+              <span className="max-w-[150px] truncate text-text-secondary">
+                {routeDiagnostics.resolvedModelId ?? 'none'}
+              </span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-text-muted">Provider</span>
+              <span className="text-text-secondary">{routeDiagnostics.resolvedProviderId ?? 'none'}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-text-muted">Fallback</span>
+              <span className={routeDiagnostics.usedFallback ? 'text-warning' : 'text-success'}>
+                {routeDiagnostics.safeFallbackUsed ? 'safe' : routeDiagnostics.usedFallback ? 'yes' : 'no'}
+              </span>
+            </div>
+            <div>
+              <span className="text-text-muted">Chain</span>
+              <p className="mt-1 max-h-12 overflow-hidden text-[11px] leading-4 text-text-secondary">
+                {routeDiagnostics.fallbackChain.join(' -> ')}
+              </p>
+            </div>
+            {routeDiagnostics.rejections.length > 0 && (
+              <div className="rounded-md border border-warning/25 bg-warning/10 px-2 py-1 text-[11px] text-warning">
+                {routeDiagnostics.rejections
+                  .slice(-2)
+                  .map((item) => `${item.providerId ?? item.modelId}: ${item.reason}`)
+                  .join(' | ')}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="telemetry-card p-3">
         <h4 className="text-xs font-semibold text-text-primary uppercase tracking-wider mb-2 flex items-center gap-1.5">

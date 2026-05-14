@@ -20,7 +20,7 @@ import {
 import { getPuterProviderStatus } from "@/lib/providers/puter";
 import { recordPuterFallbackEvent, resetPuterRuntimeForTests } from "@/lib/providers/puter/runtime";
 import { streamImageGeneration } from "@/lib/providers/puter/image";
-import { resolveRoute } from "@/lib/routing/fallback-router";
+import { getLastRoutingDiagnostics, resolveRoute } from "@/lib/routing/fallback-router";
 import { getRuntimeTelemetrySnapshot, resetRuntimeTelemetry } from "@/lib/telemetry/runtimeTelemetry";
 import { getModelMetadata } from "@/lib/models/metadata";
 import { modelRegistry } from "@/lib/models/registry";
@@ -194,6 +194,46 @@ describe("provider routing and diagnostics state", () => {
       usedFallback: false,
     });
     expect(route?.provider.id).toBe("puter");
+  });
+
+  it("uses the safe fallback route when provider health would otherwise collapse routing", () => {
+    recordFailure("puter", "timeout");
+
+    const route = resolveRoute("puter-claude-sonnet-4", {
+      preferredProvider: "puter",
+      respectHealth: true,
+    });
+
+    expect(route).toMatchObject({
+      modelId: "ollama-llama-maverick",
+      usedFallback: true,
+    });
+    expect(route?.provider.id).toBe("ollama");
+    expect(getLastRoutingDiagnostics()).toMatchObject({
+      requestedModelId: "puter-claude-sonnet-4",
+      resolvedModelId: "ollama-llama-maverick",
+      resolvedProviderId: "ollama",
+      usedFallback: true,
+    });
+    expect(getLastRoutingDiagnostics()?.rejections.map((item) => item.reason)).toContain("provider-unhealthy");
+  });
+
+  it("repairs invalid model selections with the safe fallback route", () => {
+    const route = resolveRoute("missing-model-id", {
+      preferredProvider: "puter",
+      respectHealth: true,
+    });
+
+    expect(route).toMatchObject({
+      modelId: "ollama-llama-maverick",
+      usedFallback: true,
+    });
+    expect(route?.provider.id).toBe("ollama");
+    expect(getLastRoutingDiagnostics()?.rejections).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ modelId: "missing-model-id", reason: "model-missing" }),
+      ])
+    );
   });
 
   it("respects provider health cooldowns and recovers after reset", () => {

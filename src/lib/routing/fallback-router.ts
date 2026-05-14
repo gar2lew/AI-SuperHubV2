@@ -3,11 +3,35 @@ import { getProvider } from '@/lib/providers';
 import { modelRegistry } from '@/lib/models/registry';
 import { isHealthy } from '@/lib/providers/health';
 
+const SAFE_FALLBACK_MODEL_ID = 'ollama-llama-maverick';
+
 export interface RoutingResult {
   provider: AIProvider;
   modelId: string;
   usedFallback: boolean;
   fallbackChain: string[];
+}
+
+export interface RouteRejection {
+  modelId: string;
+  providerId?: string;
+  reason:
+    | 'model-missing'
+    | 'provider-missing'
+    | 'provider-disabled'
+    | 'provider-config-unavailable'
+    | 'provider-unhealthy';
+}
+
+export interface RoutingDiagnostics {
+  requestedModelId: string;
+  preferredProvider?: string;
+  fallbackChain: string[];
+  resolvedModelId?: string;
+  resolvedProviderId?: string;
+  usedFallback: boolean;
+  safeFallbackUsed: boolean;
+  rejections: RouteRejection[];
 }
 
 export interface RoutingOptions {
@@ -24,6 +48,35 @@ const DEFAULT_OPTIONS: RoutingOptions = {
   respectHealth: true,
 };
 
+let lastRoutingDiagnostics: RoutingDiagnostics | null = null;
+
+export function getLastRoutingDiagnostics(): RoutingDiagnostics | null {
+  return lastRoutingDiagnostics;
+}
+
+function withSafeFallback(chain: string[]): string[] {
+  return chain.includes(SAFE_FALLBACK_MODEL_ID) ? chain : [...chain, SAFE_FALLBACK_MODEL_ID];
+}
+
+function rejectionForProvider(modelId: string, providerId: string): RouteRejection | null {
+  const provider = getProvider(providerId);
+  if (!provider) return { modelId, providerId, reason: 'provider-missing' };
+  if (!provider.isEnabled) return { modelId, providerId, reason: 'provider-disabled' };
+  if (!provider.validateConfig()) {
+    return { modelId, providerId, reason: 'provider-config-unavailable' };
+  }
+  return null;
+}
+
+function commitDiagnostics(diagnostics: RoutingDiagnostics, route: RoutingResult | null) {
+  lastRoutingDiagnostics = {
+    ...diagnostics,
+    resolvedModelId: route?.modelId,
+    resolvedProviderId: route?.provider.id,
+    usedFallback: route?.usedFallback ?? false,
+  };
+}
+
 /**
  * Resolve a model ID to a provider + model pair.
  * Falls back through the model's fallback chain if the primary is unavailable.
@@ -36,11 +89,27 @@ export function resolveRoute(
   const opts = { ...DEFAULT_OPTIONS, ...options };
 
   // Build fallback chain
-  const chain = modelRegistry.resolveFallbackChain(modelId);
+  const baseChain = modelRegistry.resolveFallbackChain(modelId);
+  const chain = opts.allowFallback ? withSafeFallback(baseChain) : baseChain;
+  const diagnostics: RoutingDiagnostics = {
+    requestedModelId: modelId,
+    preferredProvider: opts.preferredProvider,
+    fallbackChain: chain,
+    usedFallback: false,
+    safeFallbackUsed: false,
+    rejections: [],
+  };
+
+  if (baseChain.length === 0) {
+    diagnostics.rejections.push({ modelId, reason: 'model-missing' });
+  }
 
   for (const id of chain) {
     const model = modelRegistry.get(id);
-    if (!model) continue;
+    if (!model) {
+      diagnostics.rejections.push({ modelId: id, reason: 'model-missing' });
+      continue;
+    }
 
     // Preferred provider is honored only when the selected model belongs to it.
     // Cross-provider model remapping stays explicit in the registry fallback chain.
@@ -49,10 +118,12 @@ export function resolveRoute(
         ? opts.preferredProvider
         : model.provider;
     const provider = getProvider(providerId);
+    const providerRejection = rejectionForProvider(id, providerId);
 
-    if (provider && provider.isEnabled && provider.validateConfig()) {
+    if (provider && !providerRejection) {
       // Health check
       if (opts.respectHealth && !isHealthy(provider.id)) {
+        diagnostics.rejections.push({ modelId: id, providerId: provider.id, reason: 'provider-unhealthy' });
         continue;
       }
 
@@ -60,35 +131,56 @@ export function resolveRoute(
         opts.preferredProvider && opts.preferredProvider !== provider.id
       );
 
-      return {
+      const route = {
         provider,
         modelId: model.id,
         usedFallback: id !== modelId || usedProviderFallback,
-        fallbackChain: chain,
+        fallbackChain: id === SAFE_FALLBACK_MODEL_ID ? chain : baseChain,
       };
+      commitDiagnostics(diagnostics, route);
+      return route;
     }
+    if (providerRejection) diagnostics.rejections.push(providerRejection);
 
     // If preferred provider doesn't work, try the model's native provider
     if (opts.preferredProvider && opts.preferredProvider !== model.provider) {
       const nativeProvider = getProvider(model.provider);
+      const nativeRejection = rejectionForProvider(id, model.provider);
       if (
         nativeProvider &&
-        nativeProvider.isEnabled &&
-        nativeProvider.validateConfig() &&
+        !nativeRejection &&
         (!opts.respectHealth || isHealthy(nativeProvider.id))
       ) {
-        return {
+        const route = {
           provider: nativeProvider,
           modelId: model.id,
           usedFallback: true,
-          fallbackChain: chain,
+          fallbackChain: id === SAFE_FALLBACK_MODEL_ID ? chain : baseChain,
         };
+        commitDiagnostics(diagnostics, route);
+        return route;
       }
+      if (nativeRejection) diagnostics.rejections.push(nativeRejection);
     }
 
     if (!opts.allowFallback) break;
   }
 
+  const safeModel = modelRegistry.get(SAFE_FALLBACK_MODEL_ID);
+  const safeProvider = safeModel ? getProvider(safeModel.provider) : undefined;
+  const safeRejection = safeModel ? rejectionForProvider(SAFE_FALLBACK_MODEL_ID, safeModel.provider) : null;
+  if (opts.allowFallback && safeModel && safeProvider && !safeRejection) {
+    const route = {
+      provider: safeProvider,
+      modelId: safeModel.id,
+      usedFallback: true,
+      fallbackChain: chain,
+    };
+    commitDiagnostics({ ...diagnostics, safeFallbackUsed: true }, route);
+    return route;
+  }
+  if (safeRejection) diagnostics.rejections.push(safeRejection);
+  commitDiagnostics(diagnostics, null);
   return null;
 }
 

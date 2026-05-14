@@ -146,8 +146,8 @@ export function MessageInput() {
 
         // Try fallback if available
         if (route.fallbackChain.length > 1) {
-          const fallbackModelId = route.fallbackChain[1];
-          const fallbackRoute = resolveRoute(fallbackModelId, { allowFallback: false });
+          const fallbackModelId = route.fallbackChain[1] ?? 'ollama-llama-maverick';
+          const fallbackRoute = resolveRoute(fallbackModelId, { allowFallback: true });
           if (fallbackRoute) {
             recordPuterFallbackEvent(route.provider.id, fallbackRoute.provider.id);
             recordProviderFallbackTransition(route.provider.id, fallbackRoute.provider.id);
