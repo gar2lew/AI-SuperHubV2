@@ -15,8 +15,8 @@ export const MODEL_PRESETS: ModelPreset[] = [
     label: 'Smart',
     emoji: '🧠',
     description: 'Balanced intelligence for most tasks',
-    primary: 'anthropic-claude-sonnet-4',
-    fallbacks: ['openai-gpt-5', 'puter-claude-sonnet-4'],
+    primary: 'puter-claude-sonnet-4',
+    fallbacks: ['anthropic-claude-sonnet-4', 'openai-gpt-5'],
     capabilities: ['chat', 'vision', 'coding', 'reasoning', 'tools'],
   },
   {

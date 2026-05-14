@@ -19,7 +19,7 @@ test.describe('mobile layout and interaction stability', () => {
     const nav = page.getByLabel('Workspace navigation');
 
     await input.focus();
-    await input.fill('please stream a code response while the keyboard is open');
+    await input.fill('please stream a response while the keyboard is open');
     await simulateKeyboardOpen(page, 280);
 
     await expectWithinViewport(composer, 'composer with keyboard open');

@@ -57,16 +57,25 @@ const defaultSettings: Settings = {
   providerSettings: {},
 };
 
+const defaultModelId = resolvePresetToModel(DEFAULT_PRESET_ID);
+const defaultModelProvider = modelRegistry.get(defaultModelId)?.provider;
+
 function isProviderId(provider: string): provider is ProviderId {
   return ['puter', 'openai', 'anthropic', 'ollama', 'openrouter'].includes(provider);
 }
+
+function providerOrDefault(provider: string | undefined): ProviderId {
+  return provider && isProviderId(provider) ? provider : 'puter';
+}
+
+const defaultSelectedProvider = providerOrDefault(defaultModelProvider);
 
 export const useSettingsStore = create<SettingsState>()(
   persist(
     (set) => ({
       ...defaultSettings,
-      selectedProvider: 'puter',
-      selectedModel: resolvePresetToModel(DEFAULT_PRESET_ID),
+      selectedProvider: defaultSelectedProvider,
+      selectedModel: defaultModelId,
       selectedPreset: DEFAULT_PRESET_ID,
       settingsOpen: false,
       commandPaletteOpen: false,

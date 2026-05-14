@@ -39,6 +39,14 @@ export function EmptyState() {
           Your personal AI experimentation platform. Multi-provider, extensible, and built for the future.
         </p>
 
+        <button
+          type="button"
+          onClick={() => createConversation()}
+          className="primary-action mb-5 w-full justify-center sm:hidden"
+        >
+          Start Chat
+        </button>
+
         <div className="space-y-2">
           <p className="text-xs font-medium text-text-muted uppercase tracking-wider mb-3">
             Try asking

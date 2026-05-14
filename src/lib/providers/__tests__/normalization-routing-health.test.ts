@@ -183,6 +183,19 @@ describe("provider routing and diagnostics state", () => {
     expect(route?.provider.id).toBe("ollama");
   });
 
+  it("allows Puter routes to lazy-load the browser runtime", () => {
+    const route = resolveRoute("puter-gpt-5", {
+      preferredProvider: "puter",
+      respectHealth: false,
+    });
+
+    expect(route).toMatchObject({
+      modelId: "puter-gpt-5",
+      usedFallback: false,
+    });
+    expect(route?.provider.id).toBe("puter");
+  });
+
   it("respects provider health cooldowns and recovers after reset", () => {
     recordFailure("ollama");
 

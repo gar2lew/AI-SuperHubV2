@@ -81,6 +81,10 @@ test('mobile nav, chat density, and composer baseline @mobile', async ({ page })
   await expect(page.getByRole('navigation', { name: 'Workspace navigation' })).toBeVisible();
   await expect(page.getByLabel('Message input')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Chat workspace' })).toBeVisible();
+  await page.locator('.app-main .overflow-y-auto').evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  await settleVisualState(page);
 
   await expectVisualSnapshot(page.locator('.app-shell'), 'mobile-chat-nav-composer.png');
 });

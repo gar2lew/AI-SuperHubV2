@@ -6,6 +6,7 @@ import { DEFAULT_PRESET_ID, resolvePresetToModel } from '@/lib/models/presets';
 import { getChunkSequence, StreamEngine } from '@/lib/streaming/stream-engine';
 import { recordSuccess, recordFailure } from '@/lib/providers/health';
 import { recordProviderStreamInterruption } from '@/lib/providers/analytics';
+import { formatProviderError } from '@/lib/providers/errors';
 
 interface ChatState {
   conversations: Conversation[];
@@ -222,6 +223,22 @@ export const useChatStore = create<ChatState>()(
               if (get().currentStreamId !== streamId) return;
               console.error('Stream error:', err);
               recordFailure(providerId);
+              const bufferedContent = finalizeChunks(get().streamEngine?.getBuffer() || []);
+              if (bufferedContent.length === 0) {
+                get().addMessage(conversationId, {
+                  role: 'assistant',
+                  content: [
+                    {
+                      type: 'text',
+                      text: `Error: ${formatProviderError(err)}`,
+                    },
+                  ],
+                  metadata: {
+                    provider: providerId,
+                    model: modelId,
+                  },
+                });
+              }
               get().finalizeStream(conversationId, streamId);
             },
             onAbort: () => {
@@ -233,6 +250,19 @@ export const useChatStore = create<ChatState>()(
               if (get().currentStreamId !== streamId) return;
               console.warn('Stream timed out');
               recordFailure(providerId, 'timeout');
+              get().addMessage(conversationId, {
+                role: 'assistant',
+                content: [
+                  {
+                    type: 'text',
+                    text: `Error: ${formatProviderError(new Error('Stream timed out'))}`,
+                  },
+                ],
+                metadata: {
+                  provider: providerId,
+                  model: modelId,
+                },
+              });
               get().finalizeStream(conversationId, streamId);
             },
           },

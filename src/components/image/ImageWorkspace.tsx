@@ -4,6 +4,7 @@ import { streamImageGeneration } from '@/lib/providers/puter/image';
 import { CAPABILITY_LABELS } from '@/lib/models/capabilities';
 import { getModelMetadata } from '@/lib/models/metadata';
 import { modelRegistry } from '@/lib/models/registry';
+import { formatProviderError } from '@/lib/providers/errors';
 import type { NormalizedImageArtifact } from '@/lib/providers/puter/normalize';
 
 const DEFAULT_IMAGE_MODEL = 'gpt-image-1-mini';
@@ -42,9 +43,8 @@ export function ImageWorkspace() {
       if ((error as Error).name === 'AbortError') {
         setStatus('Ready');
       } else {
-        const message = error instanceof Error ? error.message : 'Image generation failed';
         setStatus('Failed');
-        setError(message);
+        setError(formatProviderError(error, 'Image generation failed'));
       }
     } finally {
       setIsGenerating(false);

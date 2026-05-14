@@ -12,6 +12,7 @@ import { resolveRoute } from '@/lib/routing/fallback-router';
 import { recordPuterFallbackEvent } from '@/lib/providers/puter/runtime';
 import { recordClientError } from '@/lib/diagnostics/client-errors';
 import { modelRegistry } from '@/lib/models/registry';
+import { formatProviderError } from '@/lib/providers/errors';
 
 export function MessageInput() {
   const [input, setInput] = useState('');
@@ -68,6 +69,17 @@ export function MessageInput() {
     }
     setAttachments([]);
 
+    const userMessageForContext = {
+      id: `pending-${Date.now()}`,
+      role: 'user' as const,
+      content: contentParts,
+      createdAt: Date.now(),
+    };
+    const conversationWithPendingMessage = {
+      ...activeConversation,
+      messages: [...activeConversation.messages, userMessageForContext],
+    };
+
     // Add user message
     addMessage(activeConversation.id, {
       role: 'user',
@@ -108,7 +120,7 @@ export function MessageInput() {
     setAbortController(controller);
 
     try {
-      const context = assembleContext(activeConversation);
+      const context = assembleContext(conversationWithPendingMessage);
       const stream = route.provider.stream(context, controller.signal, route.modelId);
 
       for await (const chunk of stream) {
@@ -141,7 +153,7 @@ export function MessageInput() {
             recordProviderFallbackTransition(route.provider.id, fallbackRoute.provider.id);
             appendChunk({ type: 'status', content: `fallback: ${fallbackRoute.provider.name}` });
             try {
-              const context = assembleContext(activeConversation);
+              const context = assembleContext(conversationWithPendingMessage);
               const fallbackStream = fallbackRoute.provider.stream(
                 context,
                 controller.signal,
@@ -168,7 +180,7 @@ export function MessageInput() {
           }
         }
 
-        appendChunk({ type: 'text', content: `\n\nError: ${err.message}` });
+        appendChunk({ type: 'text', content: `\n\nError: ${formatProviderError(err)}` });
         finalizeStream(activeConversation.id, streamId);
       }
     }

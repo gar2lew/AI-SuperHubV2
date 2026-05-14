@@ -42,8 +42,12 @@ export function resolveRoute(
     const model = modelRegistry.get(id);
     if (!model) continue;
 
-    // If a preferred provider is specified, try to find the model there
-    const providerId = opts.preferredProvider || model.provider;
+    // Preferred provider is honored only when the selected model belongs to it.
+    // Cross-provider model remapping stays explicit in the registry fallback chain.
+    const providerId =
+      opts.preferredProvider && opts.preferredProvider === model.provider
+        ? opts.preferredProvider
+        : model.provider;
     const provider = getProvider(providerId);
 
     if (provider && provider.isEnabled && provider.validateConfig()) {
@@ -52,10 +56,14 @@ export function resolveRoute(
         continue;
       }
 
+      const usedProviderFallback = Boolean(
+        opts.preferredProvider && opts.preferredProvider !== provider.id
+      );
+
       return {
         provider,
         modelId: model.id,
-        usedFallback: id !== modelId,
+        usedFallback: id !== modelId || usedProviderFallback,
         fallbackChain: chain,
       };
     }

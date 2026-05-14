@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { Mic, Pause, Play, Radio, Square, Volume2 } from 'lucide-react';
 import { speechToText, textToSpeechArtifact } from '@/lib/providers/puter/speech';
+import { formatProviderError } from '@/lib/providers/errors';
 
 const VOICES = ['default', 'Joanna', 'Matthew', 'Amy'];
 
@@ -29,7 +30,7 @@ export function VoiceWorkspace() {
       audio.onended = () => setStatus('Idle');
       await audio.play();
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : 'TTS failed');
+      setStatus(formatProviderError(error, 'TTS failed'));
     }
   };
 
@@ -60,7 +61,7 @@ export function VoiceWorkspace() {
         setText((prev) => (prev ? `${prev}\n${transcript}` : transcript));
         setStatus('Idle');
       } catch (error) {
-        setStatus(error instanceof Error ? error.message : 'STT failed');
+        setStatus(formatProviderError(error, 'STT failed'));
       }
     };
     recorder.start();

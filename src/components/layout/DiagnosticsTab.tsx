@@ -88,6 +88,11 @@ export function DiagnosticsTab() {
               {puterStatus.runtime.authenticated ? 'Signed in' : 'Unknown'}
             </span>
           </div>
+          {puterStatus.runtime.error && (
+            <div className="rounded-md border border-error/25 bg-error/10 px-2 py-1 text-[11px] text-error">
+              {puterStatus.runtime.error}
+            </div>
+          )}
           <div className="flex justify-between">
             <span className="text-text-muted">Timeouts</span>
             <span className="text-text-secondary">{puterStatus.runtime.timeoutEvents}</span>

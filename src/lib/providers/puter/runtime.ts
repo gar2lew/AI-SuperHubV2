@@ -130,6 +130,10 @@ function injectPuterScript(): Promise<void> {
 
     const existing = document.querySelector(`script[src="${PUTER_SCRIPT_SRC}"]`);
     if (existing) {
+      if (window.puter) {
+        resolve();
+        return;
+      }
       existing.addEventListener('load', () => resolve(), { once: true });
       existing.addEventListener('error', () => reject(new Error('Failed to load Puter script')), {
         once: true,
@@ -140,7 +144,10 @@ function injectPuterScript(): Promise<void> {
     const script = document.createElement('script');
     script.src = PUTER_SCRIPT_SRC;
     script.async = true;
-    script.onload = () => resolve();
+    script.onload = () => {
+      script.dataset.loaded = 'true';
+      resolve();
+    };
     script.onerror = () => reject(new Error('Failed to load Puter script'));
     document.head.appendChild(script);
   });
@@ -159,6 +166,7 @@ export async function ensurePuterLoaded(timeoutMs = DEFAULT_LOAD_TIMEOUT_MS) {
     runtimeState.loading = false;
     runtimeState.status = 'ready';
     runtimeState.initializedAt ||= now();
+    runtimeState.error = null;
     return window.puter;
   }
 

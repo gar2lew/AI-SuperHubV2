@@ -47,7 +47,7 @@ describe("chatStore", () => {
       title: "New Conversation",
       providerId: "puter",
       presetId: "smart",
-      modelId: "anthropic-claude-sonnet-4",
+      modelId: "puter-claude-sonnet-4",
       messages: [],
     });
   });

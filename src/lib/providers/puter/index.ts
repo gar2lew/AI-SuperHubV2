@@ -44,7 +44,7 @@ export class PuterProvider extends BaseProvider {
   readonly isEnabled = true;
 
   validateConfig(): boolean {
-    return isPuterAvailable();
+    return typeof window !== 'undefined' && getPuterReadiness() !== 'cooldown';
   }
 
   // --- Chat ---
