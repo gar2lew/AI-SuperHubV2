@@ -1,5 +1,6 @@
 import type { AIChunk } from '@/types';
 import { resolveProviderRuntimeModelId } from '@/lib/models/runtime-ids';
+import { recordRuntimeEvent } from '@/lib/telemetry/runtimeTelemetry';
 import { normalizePuterResponse, normalizeTTSResponse } from './normalize';
 import { safePuterSTT, safePuterTTS } from './runtime';
 
@@ -9,14 +10,36 @@ export interface SpeechOptions {
 }
 
 export async function textToSpeech(text: string, options: SpeechOptions = {}): Promise<Blob> {
-  const artifact = normalizeTTSResponse(await safePuterTTS(text, normalizeSpeechOptions(options)), options.voice);
-  if (artifact.blob) return artifact.blob;
-  const response = await fetch(artifact.url);
-  return response.blob();
+  recordRuntimeEvent({ type: 'voice_start', providerId: 'puter', modelId: options.model });
+  try {
+    const artifact = normalizeTTSResponse(await safePuterTTS(text, normalizeSpeechOptions(options)), options.voice);
+    if (artifact.blob) return artifact.blob;
+    const response = await fetch(artifact.url);
+    return response.blob();
+  } catch (error) {
+    recordRuntimeEvent({
+      type: 'voice_failure',
+      providerId: 'puter',
+      modelId: options.model,
+      message: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
 }
 
 export async function textToSpeechArtifact(text: string, options: SpeechOptions = {}) {
-  return normalizeTTSResponse(await safePuterTTS(text, normalizeSpeechOptions(options)), options.voice);
+  recordRuntimeEvent({ type: 'voice_start', providerId: 'puter', modelId: options.model });
+  try {
+    return normalizeTTSResponse(await safePuterTTS(text, normalizeSpeechOptions(options)), options.voice);
+  } catch (error) {
+    recordRuntimeEvent({
+      type: 'voice_failure',
+      providerId: 'puter',
+      modelId: options.model,
+      message: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
 }
 
 export async function speechToText(audio: Blob): Promise<string> {

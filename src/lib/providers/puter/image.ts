@@ -2,6 +2,7 @@ import type { ContentPart } from '@/types';
 import { recordClientError } from '@/lib/diagnostics/client-errors';
 import { resolveProviderRuntimeModelId } from '@/lib/models/runtime-ids';
 import { recordFailure, recordSuccess } from '@/lib/providers/health';
+import { recordRuntimeEvent } from '@/lib/telemetry/runtimeTelemetry';
 import { normalizeImageResponse, normalizeVisionResponse } from './normalize';
 import { safePuterChat, safePuterImage } from './runtime';
 
@@ -85,6 +86,12 @@ async function requestPuterImage(prompt: string, options: ImageGenerationOptions
   };
 
   try {
+    recordRuntimeEvent({
+      type: 'image_generation',
+      providerId: 'puter',
+      modelId: typeof options.model === 'string' ? options.model : undefined,
+      runtimeModelId: typeof requestOptions.model === 'string' ? requestOptions.model : undefined,
+    });
     const response = await safePuterImage(prompt, requestOptions);
     if (abortSignal?.aborted) {
       throw new DOMException('Image generation aborted', 'AbortError');
@@ -94,6 +101,13 @@ async function requestPuterImage(prompt: string, options: ImageGenerationOptions
   } catch (error) {
     if ((error as Error).name !== 'AbortError') {
       recordFailure('puter');
+      recordRuntimeEvent({
+        type: 'image_failure',
+        providerId: 'puter',
+        modelId: typeof options.model === 'string' ? options.model : undefined,
+        runtimeModelId: typeof requestOptions.model === 'string' ? requestOptions.model : undefined,
+        message: error instanceof Error ? error.message : String(error),
+      });
     }
     throw error;
   }

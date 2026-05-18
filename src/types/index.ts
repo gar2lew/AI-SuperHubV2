@@ -15,14 +15,22 @@ export interface ImagePart {
   type: 'image';
   url?: string;
   file?: File;
+  name?: string;
+  size?: number;
+  lastModified?: number;
   mimeType?: string;
+  persistenceState?: 'available' | 'metadata-only' | 'missing';
 }
 
 export interface AudioPart {
   type: 'audio';
   url?: string;
   file?: File;
+  name?: string;
+  size?: number;
+  lastModified?: number;
   mimeType?: string;
+  persistenceState?: 'available' | 'metadata-only' | 'missing';
 }
 
 export interface FilePart {
@@ -30,7 +38,10 @@ export interface FilePart {
   file?: File;
   url?: string;
   name?: string;
+  size?: number;
+  lastModified?: number;
   mimeType?: string;
+  persistenceState?: 'available' | 'metadata-only' | 'missing';
 }
 
 export type ContentPart = TextPart | ImagePart | AudioPart | FilePart;
@@ -84,6 +95,240 @@ export interface StatusChunk {
 export type AIChunk = TextChunk | ReasoningChunk | ToolCallChunk | ToolResultChunk | StatusChunk;
 
 // --------------------------------------------------
+// Stream Lifecycle
+// --------------------------------------------------
+
+export type StreamLifecycleState =
+  | 'idle'
+  | 'thinking'
+  | 'streaming'
+  | 'tool-running'
+  | 'fallback'
+  | 'interrupted'
+  | 'recovered'
+  | 'completed'
+  | 'failed';
+
+export interface StreamLifecycleEvent {
+  executionId?: string;
+  capability?: ExecutionCapability;
+  capabilityMetadata?: ExecutionCapabilityMetadata;
+  parentExecutionId?: string | null;
+  groupId?: string | null;
+  type: StreamLifecycleState;
+  at: number;
+  providerId?: string;
+  modelId?: string;
+  status?: string;
+  reason?: string;
+}
+
+export interface ActiveStreamState {
+  streamId: string;
+  executionId: string;
+  conversationId: string;
+  lifecycle: StreamLifecycleState;
+  providerId: string;
+  modelId: string;
+  runtimeModelId?: string;
+  startedAt: number;
+  updatedAt: number;
+  interruptedAt?: number;
+  recoveryReason?: string;
+  status?: string;
+  partialText: string;
+  timeline: StreamLifecycleEvent[];
+}
+
+export type ExecutionCapability =
+  | 'chat-generation'
+  | 'context-retrieval'
+  | 'workspace-analysis'
+  | 'tool-call'
+  | 'system-task';
+
+export interface ExecutionCapabilityMetadata {
+  toolName?: string;
+  toolStatus?: 'pending' | 'running' | 'success' | 'error';
+  retrievalSourceCount?: number;
+  retrievalLatency?: number;
+  workspaceId?: string;
+  analysisScope?: string;
+}
+
+export type ExecutionTraceEventType =
+  | 'created'
+  | 'started'
+  | 'status'
+  | 'fallback'
+  | 'interrupted'
+  | 'recovered'
+  | 'completed'
+  | 'failed'
+  | 'dependency-attached'
+  | 'retry-initiated'
+  | 'governance-denied'
+  | 'governance-timeout'
+  | 'execution-blocked'
+  | 'dependency-resolved'
+  | 'execution-ready'
+  | 'execution-scheduled'
+  | 'execution-promoted';
+
+export interface ExecutionTraceEvent {
+  executionId: string;
+  capability: ExecutionCapability;
+  lifecycle: StreamLifecycleState;
+  timestamp: number;
+  eventType: ExecutionTraceEventType;
+  providerId?: string;
+  modelId?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface ExecutionPolicy {
+  maxRetries?: number;
+  maxExecutionDurationMs?: number;
+  maxChildExecutions?: number;
+  maxDependencyDepth?: number;
+  allowCapabilityFallback?: boolean;
+  allowParallelChildren?: boolean;
+}
+
+export type ExecutionSchedulingState =
+  | 'ready'
+  | 'waiting'
+  | 'blocked'
+  | 'scheduled'
+  | 'running'
+  | 'completed';
+
+export type ExecutionPriority =
+  | 'critical'
+  | 'high'
+  | 'normal'
+  | 'low';
+
+export type ExecutionPipelineStage =
+  | 'context-retrieval'
+  | 'workspace-analysis'
+  | 'tool-preparation'
+  | 'tool-execution'
+  | 'response-synthesis'
+  | 'finalization';
+
+export type ExecutionPipelineStatus =
+  | 'idle'
+  | 'running'
+  | 'completed'
+  | 'failed';
+
+export type ExecutionPipelineTraceEventType =
+  | 'pipeline-created'
+  | 'stage-started'
+  | 'stage-completed'
+  | 'stage-blocked'
+  | 'stage-failed'
+  | 'pipeline-completed'
+  | 'pipeline-failed'
+  | 'pipeline-governance-denied';
+
+export interface ExecutionPipelineTraceEvent {
+  pipelineId: string;
+  eventType: ExecutionPipelineTraceEventType;
+  timestamp: number;
+  stage?: ExecutionPipelineStage | null;
+  executionId?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface ExecutionPipeline {
+  pipelineId: string;
+  stages: ExecutionPipelineStage[];
+  currentStage: ExecutionPipelineStage | null;
+  status: ExecutionPipelineStatus;
+  executionIds: string[];
+  startedAt: number;
+  updatedAt: number;
+  completedAt?: number;
+  trace: ExecutionPipelineTraceEvent[];
+}
+
+export type ContextFrameScope =
+  | 'conversation'
+  | 'pipeline'
+  | 'execution'
+  | 'workspace'
+  | 'tool';
+
+export type ContextFrameTraceEventType =
+  | 'frame-created'
+  | 'frame-inherited'
+  | 'context-propagated'
+  | 'context-isolated'
+  | 'context-governance-denied';
+
+export interface ContextFramePolicy {
+  maxInheritedDepth?: number;
+  maxContextKeyCount?: number;
+  restrictedPropagationScopes?: ContextFrameScope[];
+}
+
+export interface ContextFrameTraceEvent {
+  frameId: string;
+  eventType: ContextFrameTraceEventType;
+  timestamp: number;
+  metadata?: Record<string, unknown>;
+}
+
+export interface ContextFrame {
+  frameId: string;
+  scope: ContextFrameScope;
+  parentFrameId?: string | null;
+  pipelineId?: string | null;
+  executionId?: string | null;
+  createdAt: number;
+  updatedAt: number;
+  metadata?: Record<string, unknown>;
+  contextKeys: string[];
+  policy?: ContextFramePolicy;
+  trace: ContextFrameTraceEvent[];
+}
+
+export interface ExecutionRuntime {
+  executionId: string;
+  messageId: string;
+  parentExecutionId?: string | null;
+  childExecutionIds?: string[];
+  groupId?: string | null;
+  dependencyExecutionIds?: string[];
+  policy?: ExecutionPolicy;
+  schedulingState: ExecutionSchedulingState;
+  priority: ExecutionPriority;
+  scheduledAt?: number;
+  waitingOnExecutionIds?: string[];
+  pipelineId?: string | null;
+  pipelineStage?: ExecutionPipelineStage | null;
+  capability: ExecutionCapability;
+  capabilityMetadata?: ExecutionCapabilityMetadata;
+  providerId?: string;
+  modelId?: string;
+  runtimeModelId?: string;
+  lifecycle: StreamLifecycleState;
+  startedAt: number;
+  updatedAt: number;
+  completedAt?: number;
+  retryCount: number;
+  partialText?: string;
+  metadata?: {
+    recoveryReason?: string;
+    fallbackReason?: string;
+  };
+  timeline: StreamLifecycleEvent[];
+  trace: ExecutionTraceEvent[];
+}
+
+// --------------------------------------------------
 // ToolCall
 // --------------------------------------------------
 
@@ -104,6 +349,7 @@ export interface ToolCall {
 // --------------------------------------------------
 
 export interface MessageMetadata {
+  executionId?: string;
   provider?: string;
   model?: string;
   runtimeModel?: string;
@@ -147,6 +393,18 @@ export interface Conversation {
   providerId: string;
   modelId: string;
   systemPrompt?: string;
+  summary?: string;
+  tags?: string[];
+  pinnedContextIds?: string[];
+  archivedAt?: number;
+  recovery?: {
+    status: 'clean' | 'interrupted' | 'failed';
+    streamId?: string;
+    providerId?: string;
+    modelId?: string;
+    interruptedAt: number;
+    retryPrompt?: string;
+  };
   // Stream state is isolated per-conversation for future parallel chats
   streaming?: {
     isActive: boolean;
@@ -290,6 +548,38 @@ export interface Settings {
   persistConversations: boolean;
   experimentalFeatures: Record<string, boolean>;
   providerSettings: Record<string, Record<string, string>>;
+}
+
+// --------------------------------------------------
+// Workspace Continuity
+// --------------------------------------------------
+
+export interface WorkspaceContextBlock {
+  id: string;
+  title: string;
+  content: string;
+  enabled: boolean;
+  priority?: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface WorkspaceMetadata {
+  id: string;
+  name: string;
+  intent?: string;
+  category?: string;
+  tags?: string[];
+  description?: string;
+  summary?: string;
+  pinnedContext: WorkspaceContextBlock[];
+  preferences: {
+    providerId?: ProviderId;
+    modelId?: string;
+    autoInjectPinnedContext: boolean;
+  };
+  createdAt: number;
+  updatedAt: number;
 }
 
 // --------------------------------------------------

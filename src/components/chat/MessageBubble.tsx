@@ -3,6 +3,7 @@ import { motion } from 'framer-motion';
 import { User, Bot, Copy, Check, Clock, Volume2, Loader2, AlertCircle, RotateCcw } from 'lucide-react';
 import type { Message } from '@/types';
 import { useSettingsStore } from '@/store/settingsStore';
+import { useChatStore } from '@/store/chatStore';
 import { formatTimestamp, copyMessageContent } from '@/lib/utils';
 import { MarkdownRenderer } from './renderers/MarkdownRenderer';
 import { StreamingTextRenderer } from './renderers/StreamingTextRenderer';
@@ -14,10 +15,12 @@ interface MessageBubbleProps {
   message: Message;
   isStreaming?: boolean;
   grouped?: boolean;
+  streamStatus?: string;
 }
 
-export function MessageBubble({ message, isStreaming, grouped }: MessageBubbleProps) {
+export function MessageBubble({ message, isStreaming, grouped, streamStatus }: MessageBubbleProps) {
   const showTimestamps = useSettingsStore((s) => s.showTimestamps);
+  const isAppStreaming = useChatStore((s) => s.isStreaming);
   const [copied, setCopied] = useState(false);
   const [ttsState, setTtsState] = useState<'idle' | 'loading' | 'playing' | 'error'>('idle');
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -62,10 +65,14 @@ export function MessageBubble({ message, isStreaming, grouped }: MessageBubblePr
   };
 
   const handleRetry = () => {
-    if (!message.metadata?.retryPrompt) return;
+    if (!message.metadata?.retryPrompt || isAppStreaming) return;
     window.dispatchEvent(
       new CustomEvent('ai-superhub:retry-chat', {
-        detail: { prompt: message.metadata.retryPrompt },
+        detail: {
+          prompt: message.metadata.retryPrompt,
+          providerId: message.metadata.provider,
+          modelId: message.metadata.model,
+        },
       })
     );
   };
@@ -175,12 +182,19 @@ export function MessageBubble({ message, isStreaming, grouped }: MessageBubblePr
             <ReasoningRenderer reasoning={message.metadata.reasoning} />
           )}
 
+          {streamStatus && (
+            <p className="mt-2 text-xs text-text-muted" aria-live="polite">
+              {streamStatus}
+            </p>
+          )}
+
           {canRetry && (
             <button
               type="button"
               onClick={handleRetry}
-              className="mt-3 inline-flex items-center gap-1.5 rounded-md border border-warning/30 bg-warning/10 px-2.5 py-1.5 text-xs font-medium text-warning hover:bg-warning/15"
-              aria-label="Retry failed request"
+              disabled={isAppStreaming}
+              className="mt-3 inline-flex items-center gap-1.5 rounded-md border border-warning/30 bg-warning/10 px-2.5 py-1.5 text-xs font-medium text-warning hover:bg-warning/15 disabled:cursor-not-allowed disabled:opacity-50"
+              aria-label={isAppStreaming ? 'Retry available after current stream finishes' : 'Retry failed request'}
             >
               <RotateCcw size={13} />
               Retry

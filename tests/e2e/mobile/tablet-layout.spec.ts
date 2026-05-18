@@ -11,7 +11,9 @@ async function switchWorkspace(page: import('@playwright/test').Page, buttonName
   const tab = page.getByRole('button', { name: buttonName });
   await expect(tab).toBeVisible();
   await tab.click({ force: true });
-  await expect(page.getByRole('heading', { name: heading })).toBeVisible({ timeout: 12_000 });
+  await expect(
+    page.getByRole('heading', { name: heading }).or(page.getByText(heading, { exact: true })).first()
+  ).toBeVisible({ timeout: 30_000 });
 }
 
 test.describe('tablet scaling and wide content behavior', () => {

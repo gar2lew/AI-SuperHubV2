@@ -13,17 +13,25 @@ interface MessageListProps {
 
 export const MessageList = memo(function MessageList({ messages }: MessageListProps) {
   const isStreaming = useChatStore((s) => s.isStreaming);
+  const activeExecution = useChatStore((s) => s.getActiveExecution());
+  const streamLifecycle = useChatStore((s) => s.getStreamLifecycle());
   const streamText = useChatStore((s) => s.getStreamText());
+  const streamStatus = useChatStore((s) => s.getStreamStatus());
   const reduceMotion = useReducedMotion();
   useRenderProfile('MessageList');
+  const runtimeLifecycle = activeExecution?.lifecycle ?? streamLifecycle;
+  const runtimeText = activeExecution?.partialText ?? streamText;
+  const isRuntimeActive =
+    Boolean(activeExecution) || (isStreaming && runtimeLifecycle !== 'idle');
   const streamingMessage = useMemo<Message>(
     () => ({
-      id: 'streaming',
+      id: activeExecution?.messageId ?? 'streaming',
       role: 'assistant',
-      content: textContent(streamText),
+      content: textContent(runtimeText),
       createdAt: 0,
+      metadata: activeExecution ? { executionId: activeExecution.executionId } : undefined,
     }),
-    [streamText]
+    [activeExecution, runtimeText]
   );
 
   return (
@@ -44,7 +52,7 @@ export const MessageList = memo(function MessageList({ messages }: MessageListPr
         </motion.div>
       ))}
 
-      {isStreaming && streamText && (
+      {isRuntimeActive && runtimeLifecycle !== 'idle' && runtimeText && (
         <motion.div
           initial={reduceMotion ? false : { opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
@@ -54,13 +62,14 @@ export const MessageList = memo(function MessageList({ messages }: MessageListPr
           <MessageBubble
             message={streamingMessage}
             isStreaming={true}
+            streamStatus={streamStatus}
           />
         </motion.div>
       )}
 
-      {isStreaming && !streamText && (
+      {isRuntimeActive && runtimeLifecycle !== 'idle' && !runtimeText && (
         <motion.div initial={reduceMotion ? false : { opacity: 0 }} animate={{ opacity: 1 }}>
-          <TypingIndicator />
+          <TypingIndicator status={streamStatus} />
         </motion.div>
       )}
     </div>

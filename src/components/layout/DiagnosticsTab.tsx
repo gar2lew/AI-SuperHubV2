@@ -19,6 +19,7 @@ import {
   subscribeClientErrors,
 } from '@/lib/diagnostics/client-errors';
 import { getRuntimeTelemetrySnapshot } from '@/lib/telemetry/runtimeTelemetry';
+import { deploymentMetadata } from '@/lib/deployment/metadata';
 import { CAPABILITY_LABELS } from '@/lib/models/capabilities';
 import { getModelMetadata } from '@/lib/models/metadata';
 import { modelRegistry } from '@/lib/models/registry';
@@ -67,6 +68,31 @@ export function DiagnosticsTab() {
       </div>
 
       <DeploymentStatus />
+
+      <div className="telemetry-card p-3">
+        <h4 className="text-xs font-semibold text-text-primary uppercase tracking-wider mb-2 flex items-center gap-1.5">
+          <ShieldAlert size={12} className="text-accent" />
+          Release Metadata
+        </h4>
+        <div className="space-y-1.5 text-xs">
+          <div className="flex justify-between">
+            <span className="text-text-muted">Version</span>
+            <span className="text-text-secondary">{deploymentMetadata.appVersion || 'unknown'}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-text-muted">Build</span>
+            <span className="text-text-secondary">{formatBuildTime(deploymentMetadata.deploymentTimestamp)}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-text-muted">Environment</span>
+            <span className="text-text-secondary">{deploymentMetadata.vercelEnv}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-text-muted">Commit</span>
+            <span className="text-text-secondary">{deploymentMetadata.shortCommitSha || 'unknown'}</span>
+          </div>
+        </div>
+      </div>
 
       {routeDiagnostics && (
         <div className="telemetry-card p-3">
@@ -157,6 +183,12 @@ export function DiagnosticsTab() {
           <div className="flex justify-between">
             <span className="text-text-muted">Reconnects</span>
             <span className="text-text-secondary">{puterStatus.runtime.reconnectAttempts}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-text-muted">Reconnect exhausted</span>
+            <span className={puterStatus.runtime.reconnectExhausted ? 'text-warning' : 'text-text-secondary'}>
+              {puterStatus.runtime.reconnectExhausted ? 'yes' : 'no'}
+            </span>
           </div>
           <div className="flex justify-between">
             <span className="text-text-muted">WS failures</span>
@@ -290,7 +322,51 @@ export function DiagnosticsTab() {
             <span className="text-text-muted">Render samples</span>
             <span className="text-text-secondary">{runtimeTelemetry.render.recent.length}</span>
           </div>
+          <div className="flex justify-between">
+            <span className="text-text-muted">First token avg</span>
+            <span className="text-text-secondary">{formatMs(runtimeTelemetry.performance.averageFirstTokenLatencyMs)}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-text-muted">Retry freq</span>
+            <span className="text-text-secondary">{runtimeTelemetry.performance.retryFrequency}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-text-muted">Reconnect freq</span>
+            <span className="text-text-secondary">{runtimeTelemetry.performance.reconnectFrequency}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-text-muted">Failure rate</span>
+            <span className="text-text-secondary">{runtimeTelemetry.performance.providerFailureRate}</span>
+          </div>
         </div>
+      </div>
+
+      <div className="telemetry-card p-3">
+        <h4 className="text-xs font-semibold text-text-primary uppercase tracking-wider mb-2 flex items-center gap-1.5">
+          <Clock size={12} className="text-accent" />
+          Runtime Timeline
+        </h4>
+        {runtimeTelemetry.events.recent.length === 0 ? (
+          <p className="text-xs text-text-muted">No runtime events captured</p>
+        ) : (
+          <div className="max-h-56 space-y-2 overflow-y-auto pr-1">
+            {runtimeTelemetry.events.recent.slice(-12).reverse().map((event) => (
+              <div key={event.id} className="rounded-md border border-border-subtle/70 bg-bg-tertiary/35 p-2 text-xs">
+                <div className="mb-1 flex items-center justify-between gap-2">
+                  <span className="truncate font-medium text-text-secondary">{event.type}</span>
+                  <span className="shrink-0 text-[10px] text-text-muted">{formatTime(event.at)}</span>
+                </div>
+                <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-[10px] text-text-muted">
+                  {event.providerId && <><span>Provider</span><span className="truncate text-right">{event.providerId}</span></>}
+                  {event.runtimeModelId && <><span>Runtime</span><span className="truncate text-right">{event.runtimeModelId}</span></>}
+                  {event.streamId && <><span>Stream</span><span className="truncate text-right font-mono">{event.streamId}</span></>}
+                  {typeof event.latencyMs === 'number' && <><span>Latency</span><span className="text-right">{formatMs(event.latencyMs)}</span></>}
+                </div>
+                {event.message && <p className="mt-1 break-words text-[10px] text-text-muted">{event.message}</p>}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="telemetry-card p-3">
@@ -489,6 +565,16 @@ function formatMs(value: number) {
     return `${(value / 1000).toFixed(1)}s`;
   }
   return `${Math.round(value)}ms`;
+}
+
+function formatBuildTime(value: string) {
+  if (!value || Number.isNaN(Date.parse(value))) return 'unknown';
+  return new Intl.DateTimeFormat(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(value));
 }
 
 function MetricBadge({

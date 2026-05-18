@@ -3,21 +3,31 @@ import { motion } from 'framer-motion';
 import { Send, Square, Paperclip, Image, FileText } from 'lucide-react';
 import { useChatStore } from '@/store/chatStore';
 import { useSettingsStore } from '@/store/settingsStore';
+import { useWorkspaceStore } from '@/store/workspaceStore';
 
 import { textContent } from '@/lib/utils';
-import { assembleContext } from '@/lib/core/context';
-import { recordFailure } from '@/lib/providers/health';
-import { recordProviderFallbackTransition } from '@/lib/providers/analytics';
-import { resolveRoute } from '@/lib/routing/fallback-router';
-import { recordPuterFallbackEvent, resetPuterConnectionStateForRetry } from '@/lib/providers/puter/runtime';
-import { recordClientError } from '@/lib/diagnostics/client-errors';
-import { modelRegistry } from '@/lib/models/registry';
-import { formatProviderError } from '@/lib/providers/errors';
+import { executeChatRequest } from '@/lib/core/chat-orchestrator';
+import { resetPuterConnectionStateForRetry } from '@/lib/providers/puter/runtime';
+import { recordRuntimeEvent } from '@/lib/telemetry/runtimeTelemetry';
+
+interface ComposerAttachment {
+  name: string;
+  type: string;
+  size?: number;
+  lastModified?: number;
+  file?: File;
+  restored?: boolean;
+}
 
 export function MessageInput() {
   const [input, setInput] = useState('');
+  const [retryOverride, setRetryOverride] = useState<{
+    prompt: string;
+    providerId?: string;
+    modelId?: string;
+  } | null>(null);
   const [isDragging, setIsDragging] = useState(false);
-  const [attachments, setAttachments] = useState<{ name: string; type: string; file?: File }[]>([]);
+  const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -27,16 +37,30 @@ export function MessageInput() {
   const addMessage = useChatStore((s) => s.addMessage);
   const startStreaming = useChatStore((s) => s.startStreaming);
   const appendChunk = useChatStore((s) => s.appendChunk);
+  const beginFallback = useChatStore((s) => s.beginFallback);
   const finalizeStream = useChatStore((s) => s.finalizeStream);
   const stopStreaming = useChatStore((s) => s.stopStreaming);
   const setAbortController = useChatStore((s) => s.setAbortController);
+  const setDraft = useChatStore((s) => s.setDraft);
+  const clearDraft = useChatStore((s) => s.clearDraft);
   const isStreaming = useChatStore((s) => s.isStreaming);
   const selectedProvider = useSettingsStore((s) => s.selectedProvider);
   const selectedModel = useSettingsStore((s) => s.selectedModel);
+  const workspaceContext = useWorkspaceStore((s) => s.getInjectableContext());
 
   useEffect(() => {
-    setInput('');
-    setAttachments([]);
+    const draft = activeConversation ? useChatStore.getState().drafts[activeConversation.id] : undefined;
+    setInput(draft?.text ?? '');
+    setRetryOverride(null);
+    setAttachments(
+      draft?.attachments.map((attachment) => ({
+        name: attachment.name,
+        type: attachment.mimeType ?? '',
+        size: attachment.size,
+        lastModified: attachment.lastModified,
+        restored: true,
+      })) ?? []
+    );
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
     }
@@ -44,9 +68,18 @@ export function MessageInput() {
 
   useEffect(() => {
     const handleRetry = (event: Event) => {
-      const prompt = (event as CustomEvent<{ prompt?: string }>).detail?.prompt;
+      const detail = (event as CustomEvent<{ prompt?: string; providerId?: string; modelId?: string }>).detail;
+      const prompt = detail?.prompt;
       if (!prompt) return;
+      if (useChatStore.getState().isStreaming) return;
       resetPuterConnectionStateForRetry();
+      recordRuntimeEvent({
+        type: 'retry_triggered',
+        providerId: detail.providerId,
+        modelId: detail.modelId,
+        message: 'chat retry requested',
+      });
+      setRetryOverride({ prompt, providerId: detail.providerId, modelId: detail.modelId });
       setInput(prompt);
       requestAnimationFrame(() => textareaRef.current?.focus());
     };
@@ -59,7 +92,10 @@ export function MessageInput() {
     if ((!input.trim() && attachments.length === 0) || !activeConversation || isStreaming) return;
 
     const userText = input.trim();
+    const retryForSend = retryOverride?.prompt === userText ? retryOverride : null;
     setInput('');
+    setRetryOverride(null);
+    clearDraft(activeConversation.id);
 
     // Build content parts from text + attachments
     const contentParts = textContent(userText);
@@ -68,7 +104,11 @@ export function MessageInput() {
       contentParts.push({
         type: 'image',
         file: img.file,
+        name: img.name,
+        size: img.size,
+        lastModified: img.lastModified,
         mimeType: img.type,
+        persistenceState: img.file ? 'available' : 'metadata-only',
       });
     }
     const fileAttachments = attachments.filter((a) => !a.type.startsWith('image'));
@@ -77,132 +117,34 @@ export function MessageInput() {
         type: 'file',
         file: f.file,
         name: f.name,
+        size: f.size,
+        lastModified: f.lastModified,
         mimeType: f.type,
+        persistenceState: f.file ? 'available' : 'metadata-only',
       });
     }
     setAttachments([]);
 
-    const userMessageForContext = {
-      id: `pending-${Date.now()}`,
-      role: 'user' as const,
-      content: contentParts,
-      createdAt: Date.now(),
-    };
-    const conversationWithPendingMessage = {
-      ...activeConversation,
-      messages: [...activeConversation.messages, userMessageForContext],
-    };
-
-    // Add user message
-    addMessage(activeConversation.id, {
-      role: 'user',
-      content: contentParts,
-    });
-
-    const selectedModelRecord = modelRegistry.get(selectedModel);
-    if (selectedModelRecord && !selectedModelRecord.capabilities.includes('chat')) {
-      addMessage(activeConversation.id, {
-        role: 'assistant',
-        content: textContent(
-          `${selectedModelRecord.label} does not support chat. Choose a chat-capable model or switch to the matching workspace.`
-        ),
-      });
-      return;
-    }
-
-    // Resolve route with fallback support
-    const route = resolveRoute(selectedModel, {
-      preferredProvider: selectedProvider,
-      allowFallback: true,
-    });
-
-    if (!route) {
-      addMessage(activeConversation.id, {
-        role: 'assistant',
-        content: textContent('Error: No available provider found. All providers are either disabled or unavailable.'),
-      });
-      return;
-    }
-
-    if (route.usedFallback && selectedProvider !== route.provider.id) {
-      recordProviderFallbackTransition(selectedProvider, route.provider.id);
-    }
-
-    const streamId = startStreaming(
-      activeConversation.id,
-      route.provider.id,
-      route.modelId,
-      route.runtimeModelId,
-      userText
+    await executeChatRequest(
+      {
+        conversation: activeConversation,
+        contentParts,
+        prompt: userText,
+        selectedModel,
+        selectedProvider,
+        retryOverride: retryForSend,
+        workspaceContext,
+      },
+      {
+        addMessage,
+        startStreaming,
+        appendChunk,
+        beginFallback,
+        finalizeStream,
+        setAbortController,
+        getCurrentStreamId: () => useChatStore.getState().getCurrentStreamId(),
+      }
     );
-    const controller = new AbortController();
-    setAbortController(controller);
-
-    try {
-      const context = assembleContext(conversationWithPendingMessage);
-      const stream = route.provider.stream(context, controller.signal, route.runtimeModelId);
-
-      for await (const chunk of stream) {
-        appendChunk(chunk);
-      }
-
-      finalizeStream(activeConversation.id, streamId);
-    } catch (error) {
-      const err = error as Error;
-      if (err.name !== 'AbortError') {
-        recordClientError({
-          source: 'stream',
-          error: err,
-          context: {
-            providerId: route.provider.id,
-            modelId: route.modelId,
-            streamId,
-            phase: 'primary',
-          },
-        });
-        console.error('Stream failed:', err);
-        recordFailure(route.provider.id);
-
-        // Try fallback if available
-        if (route.fallbackChain.length > 1) {
-          const fallbackModelId = route.fallbackChain[1] ?? 'ollama-llama-maverick';
-          const fallbackRoute = resolveRoute(fallbackModelId, { allowFallback: true });
-          if (fallbackRoute) {
-            recordPuterFallbackEvent(route.provider.id, fallbackRoute.provider.id);
-            recordProviderFallbackTransition(route.provider.id, fallbackRoute.provider.id);
-            appendChunk({ type: 'status', content: `fallback: ${fallbackRoute.provider.name}` });
-            try {
-              const context = assembleContext(conversationWithPendingMessage);
-              const fallbackStream = fallbackRoute.provider.stream(
-                context,
-                controller.signal,
-                fallbackRoute.runtimeModelId
-              );
-              for await (const chunk of fallbackStream) {
-                appendChunk(chunk);
-              }
-              finalizeStream(activeConversation.id, streamId);
-              return;
-            } catch (fallbackErr) {
-              recordClientError({
-                source: 'stream',
-                error: fallbackErr,
-                context: {
-                  providerId: fallbackRoute.provider.id,
-                  modelId: fallbackRoute.modelId,
-                  streamId,
-                  phase: 'fallback',
-                },
-              });
-              recordFailure(fallbackRoute.provider.id);
-            }
-          }
-        }
-
-        appendChunk({ type: 'text', content: `\n\nError: ${formatProviderError(err)}` });
-        finalizeStream(activeConversation.id, streamId);
-      }
-    }
   }, [
     input,
     attachments,
@@ -211,10 +153,14 @@ export function MessageInput() {
     addMessage,
     startStreaming,
     appendChunk,
+    beginFallback,
     finalizeStream,
     setAbortController,
+    clearDraft,
     selectedProvider,
     selectedModel,
+    retryOverride,
+    workspaceContext,
   ]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -240,9 +186,25 @@ export function MessageInput() {
     const newAttachments = files.map((f) => ({
       name: f.name,
       type: f.type,
+      size: f.size,
+      lastModified: f.lastModified,
       file: f,
     }));
-    setAttachments((prev) => [...prev, ...newAttachments]);
+    setAttachments((prev) => {
+      const next = [...prev, ...newAttachments];
+      if (activeConversation) {
+        setDraft(activeConversation.id, {
+          text: input,
+          attachments: next.map((attachment) => ({
+            name: attachment.name,
+            mimeType: attachment.type,
+            size: attachment.size,
+            lastModified: attachment.lastModified,
+          })),
+        });
+      }
+      return next;
+    });
   };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -250,9 +212,25 @@ export function MessageInput() {
     const newAttachments = files.map((f) => ({
       name: f.name,
       type: f.type,
+      size: f.size,
+      lastModified: f.lastModified,
       file: f,
     }));
-    setAttachments((prev) => [...prev, ...newAttachments]);
+    setAttachments((prev) => {
+      const next = [...prev, ...newAttachments];
+      if (activeConversation) {
+        setDraft(activeConversation.id, {
+          text: input,
+          attachments: next.map((attachment) => ({
+            name: attachment.name,
+            mimeType: attachment.type,
+            size: attachment.size,
+            lastModified: attachment.lastModified,
+          })),
+        });
+      }
+      return next;
+    });
     e.target.value = '';
   };
 
@@ -302,8 +280,23 @@ export function MessageInput() {
             >
               {att.type.startsWith('image') ? <Image size={12} /> : <FileText size={12} />}
               <span className="max-w-[120px] truncate">{att.name}</span>
+              {att.restored && <span className="text-text-muted">(restore to send)</span>}
               <button
-                onClick={() => setAttachments((prev) => prev.filter((_, idx) => idx !== i))}
+                onClick={() => setAttachments((prev) => {
+                  const next = prev.filter((_, idx) => idx !== i);
+                  if (activeConversation) {
+                    setDraft(activeConversation.id, {
+                      text: input,
+                      attachments: next.map((attachment) => ({
+                        name: attachment.name,
+                        mimeType: attachment.type,
+                        size: attachment.size,
+                        lastModified: attachment.lastModified,
+                      })),
+                    });
+                  }
+                  return next;
+                })}
                 className="ml-1 text-text-muted hover:text-error"
                 aria-label={`Remove ${att.name}`}
               >
@@ -338,6 +331,20 @@ export function MessageInput() {
             ref={textareaRef}
             value={input}
             onChange={(e) => {
+              if (retryOverride && e.target.value !== retryOverride.prompt) {
+                setRetryOverride(null);
+              }
+              if (activeConversation) {
+                setDraft(activeConversation.id, {
+                  text: e.target.value,
+                  attachments: attachments.map((attachment) => ({
+                    name: attachment.name,
+                    mimeType: attachment.type,
+                    size: attachment.size,
+                    lastModified: attachment.lastModified,
+                  })),
+                });
+              }
               setInput(e.target.value);
             }}
             onKeyDown={handleKeyDown}

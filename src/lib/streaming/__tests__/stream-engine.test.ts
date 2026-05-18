@@ -107,6 +107,29 @@ describe("StreamEngine", () => {
     expect(engine.getBuffer().map((chunk) => chunk.content)).toEqual(["before abort"]);
   });
 
+  it("treats completion, abort, and error as terminal idempotent operations", () => {
+    const cbs = callbacks();
+    const engine = new StreamEngine(cbs, { coalesceText: false });
+
+    engine.start();
+    engine.push({ type: "text", content: "done once" });
+    engine.done();
+    engine.done();
+    engine.abort();
+    engine.error(new Error("late failure"));
+
+    expect(cbs.onDone).toHaveBeenCalledOnce();
+    expect(cbs.onAbort).not.toHaveBeenCalled();
+    expect(cbs.onError).not.toHaveBeenCalled();
+    expect(engine.getBuffer().map((chunk) => chunk.content)).toEqual(["done once"]);
+    expect(getRuntimeTelemetrySnapshot().streams).toMatchObject({
+      started: 1,
+      completed: 1,
+      aborted: 0,
+      errored: 0,
+    });
+  });
+
   it("aborts runStream when the abort signal is already set", async () => {
     const cbs = callbacks();
     const controller = new AbortController();

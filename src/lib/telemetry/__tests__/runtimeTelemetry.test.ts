@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   getRuntimeTelemetrySnapshot,
   recordFallback,
+  recordRuntimeEvent,
   recordProviderLatency,
   recordRenderTiming,
   recordStreamAbort,
@@ -89,6 +90,62 @@ describe("runtimeTelemetry", () => {
       width: 390,
       keyboardInset: 69,
       deviceType: "mobile",
+    });
+  });
+
+  it("records structured runtime events with stream correlation and derived performance metrics", () => {
+    recordStreamStart({
+      streamId: "stream-1",
+      providerId: "puter",
+      modelId: "puter-claude-sonnet-4",
+      runtimeModelId: "claude-sonnet-4",
+      conversationId: "conversation-1",
+      fallbackChain: ["puter-claude-sonnet-4", "ollama-llama-maverick"],
+      retryCount: 1,
+      reconnectCount: 2,
+    });
+
+    vi.setSystemTime(new Date("2026-05-13T08:00:00.250Z"));
+    recordStreamChunk("stream-1", 4);
+    vi.setSystemTime(new Date("2026-05-13T08:00:01.000Z"));
+    recordFallback("puter", "ollama", {
+      streamId: "stream-1",
+      conversationId: "conversation-1",
+      runtimeModelId: "claude-sonnet-4",
+      fallbackChain: ["puter-claude-sonnet-4", "ollama-llama-maverick"],
+    });
+    recordRuntimeEvent({
+      type: "retry_triggered",
+      providerId: "puter",
+      modelId: "puter-claude-sonnet-4",
+      runtimeModelId: "claude-sonnet-4",
+      streamId: "stream-1",
+      conversationId: "conversation-1",
+    });
+    recordStreamComplete("stream-1");
+
+    const snapshot = getRuntimeTelemetrySnapshot();
+
+    expect(snapshot.streams.recent[0]).toMatchObject({
+      streamId: "stream-1",
+      providerId: "puter",
+      modelId: "puter-claude-sonnet-4",
+      runtimeModelId: "claude-sonnet-4",
+      firstTokenLatencyMs: 250,
+      retryCount: 1,
+      reconnectCount: 2,
+    });
+    expect(snapshot.events.recent.map((event) => event.type)).toEqual([
+      "stream_start",
+      "provider_fallback",
+      "retry_triggered",
+      "stream_complete",
+    ]);
+    expect(snapshot.performance).toMatchObject({
+      averageStreamLatencyMs: 1000,
+      averageFirstTokenLatencyMs: 250,
+      retryFrequency: 1,
+      providerFailureRate: 0,
     });
   });
 });

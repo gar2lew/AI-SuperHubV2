@@ -1,6 +1,7 @@
 import type { Message } from '@/types';
 import { recordClientError } from '@/lib/diagnostics/client-errors';
-import { recordFallback } from '@/lib/telemetry/runtimeTelemetry';
+import { recordFallback, recordRuntimeEvent } from '@/lib/telemetry/runtimeTelemetry';
+import { resetHealth } from '@/lib/providers/health';
 import { formatMessages, extractSystemPrompt } from './normalize';
 
 const PUTER_SCRIPT_SRC = 'https://js.puter.com/v2/';
@@ -61,6 +62,7 @@ export interface PuterRuntimeState {
   authState: PuterAuthState;
   reconnectAttempts: number;
   websocketFailures: number;
+  reconnectExhausted: boolean;
   lastReconnectAt: number | null;
   lastConnectionChangeAt: number | null;
   lastTimeoutAt: number | null;
@@ -91,6 +93,7 @@ const runtimeState: PuterRuntimeState = {
   authState: 'unknown',
   reconnectAttempts: 0,
   websocketFailures: 0,
+  reconnectExhausted: false,
   lastReconnectAt: null,
   lastConnectionChangeAt: null,
   lastTimeoutAt: null,
@@ -115,6 +118,25 @@ function setConnectionState(connectionState: PuterConnectionState) {
   }
 }
 
+function markOperationalSuccess() {
+  runtimeState.ready = true;
+  runtimeState.loading = false;
+  runtimeState.status = 'ready';
+  runtimeState.error = null;
+  runtimeState.cooldownUntil = null;
+  runtimeState.reconnectAttempts = 0;
+  runtimeState.reconnectExhausted = false;
+  setConnectionState('connected');
+}
+
+function markRuntimeLoadedReady() {
+  runtimeState.ready = true;
+  runtimeState.loading = false;
+  runtimeState.status = 'ready';
+  runtimeState.error = null;
+  setConnectionState('connected');
+}
+
 function isConnectionLikeError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error || '');
   return /websocket|socket|network|offline|disconnect|connection|transport|closed/i.test(message);
@@ -130,11 +152,17 @@ function markFailure(error: unknown) {
   runtimeState.lastFailureAt = now();
   if (isConnectionLikeError(error)) {
     runtimeState.websocketFailures += 1;
+    runtimeState.reconnectExhausted = false;
     setConnectionState('degraded');
   }
   if (isAuthLikeError(error)) {
     runtimeState.authState = /expired|session/i.test(runtimeState.error) ? 'expired' : 'unauthenticated';
     runtimeState.authenticated = false;
+    recordRuntimeEvent({
+      type: 'runtime_auth_failure',
+      providerId: 'puter',
+      message: runtimeState.error,
+    });
   }
   runtimeState.cooldownUntil = now() + FAILURE_COOLDOWN_MS;
   runtimeState.status = 'cooldown';
@@ -214,12 +242,8 @@ export async function ensurePuterLoaded(timeoutMs = DEFAULT_LOAD_TIMEOUT_MS) {
 
   if (window.puter) {
     runtimeState.loaded = true;
-    runtimeState.ready = true;
-    runtimeState.loading = false;
-    runtimeState.status = 'ready';
     runtimeState.initializedAt ||= now();
-    runtimeState.error = null;
-    setConnectionState('connected');
+    markRuntimeLoadedReady();
     return window.puter;
   }
 
@@ -235,12 +259,8 @@ export async function ensurePuterLoaded(timeoutMs = DEFAULT_LOAD_TIMEOUT_MS) {
     if (!window.puter) throw new Error('Puter loaded but unavailable');
 
     runtimeState.loaded = true;
-    runtimeState.ready = true;
-    runtimeState.loading = false;
-    runtimeState.status = 'ready';
     runtimeState.initializedAt = now();
-    runtimeState.error = null;
-    setConnectionState('connected');
+    markRuntimeLoadedReady();
     return window.puter;
   } catch (error) {
     puterLoadPromise = null;
@@ -299,11 +319,19 @@ export async function ensurePuterAuthenticated() {
     runtimeState.authenticated = !!user;
     runtimeState.authState = user ? 'authenticated' : 'unauthenticated';
     runtimeState.lastAuthCheckAt = now();
+    if (user) {
+      markOperationalSuccess();
+    }
     return !!user;
   } catch {
     runtimeState.authenticated = false;
     runtimeState.authState = 'expired';
     runtimeState.lastAuthCheckAt = now();
+    recordRuntimeEvent({
+      type: 'runtime_auth_failure',
+      providerId: 'puter',
+      message: 'Puter auth check failed',
+    });
     return false;
   }
 }
@@ -330,9 +358,7 @@ export async function safePuterChat(messages: Message[], options: SafeChatOption
       'Puter chat'
     );
     runtimeState.providerLatencyMs = now() - startedAt;
-    runtimeState.error = null;
-    runtimeState.status = 'ready';
-    setConnectionState('connected');
+    markOperationalSuccess();
     return response;
   } catch (error) {
     recordClientError({
@@ -365,9 +391,7 @@ export async function safePuterImage(prompt: string, options: Record<string, unk
       'Puter image'
     );
     runtimeState.providerLatencyMs = now() - startedAt;
-    runtimeState.error = null;
-    runtimeState.status = 'ready';
-    setConnectionState('connected');
+    markOperationalSuccess();
     return response;
   } catch (error) {
     recordClientError({
@@ -393,7 +417,7 @@ export async function safePuterTTS(text: string, options: Record<string, unknown
     const startedAt = now();
     const response = await withTimeout(Promise.resolve(ttsApi(text, options)), DEFAULT_OPERATION_TIMEOUT_MS, 'Puter TTS');
     runtimeState.providerLatencyMs = now() - startedAt;
-    setConnectionState('connected');
+    markOperationalSuccess();
     return response;
   } catch (error) {
     markFailure(error);
@@ -410,7 +434,7 @@ export async function safePuterSTT(audio: Blob, options: Record<string, unknown>
     const startedAt = now();
     const response = await withTimeout(Promise.resolve(sttApi(audio, options)), DEFAULT_OPERATION_TIMEOUT_MS, 'Puter STT');
     runtimeState.providerLatencyMs = now() - startedAt;
-    setConnectionState('connected');
+    markOperationalSuccess();
     return response;
   } catch (error) {
     markFailure(error);
@@ -437,22 +461,47 @@ export function resetPuterConnectionStateForRetry() {
   runtimeState.status = runtimeState.loaded ? 'ready' : 'idle';
   runtimeState.ready = runtimeState.loaded;
   runtimeState.error = null;
+  runtimeState.reconnectExhausted = false;
+  resetHealth('puter');
   setConnectionState(runtimeState.loaded ? 'reconnecting' : 'connecting');
 }
 
 function scheduleReconnect() {
   if (!isBrowserReady()) return;
-  if (runtimeState.reconnectAttempts >= 3 || reconnectTimer) return;
+  if (reconnectTimer) return;
+  if (runtimeState.reconnectAttempts >= 3) {
+    runtimeState.reconnectExhausted = true;
+    if (runtimeState.connectionState === 'reconnecting') {
+      setConnectionState('degraded');
+    }
+    return;
+  }
 
+  runtimeState.reconnectExhausted = false;
   runtimeState.reconnectAttempts += 1;
   runtimeState.lastReconnectAt = now();
+  recordRuntimeEvent({
+    type: 'websocket_reconnect',
+    providerId: 'puter',
+    reconnectCount: runtimeState.reconnectAttempts,
+  });
   setConnectionState('reconnecting');
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
     ensurePuterLoaded(5000)
       .then(() => ensurePuterAuthenticated())
+      .then((authenticated) => {
+        if (!authenticated) scheduleReconnect();
+      })
       .catch(() => {
-        if (runtimeState.reconnectAttempts < 3) scheduleReconnect();
+        if (runtimeState.reconnectAttempts < 3) {
+          scheduleReconnect();
+        } else {
+          runtimeState.reconnectExhausted = true;
+          if (runtimeState.connectionState === 'reconnecting') {
+            setConnectionState('degraded');
+          }
+        }
       });
   }, Math.min(1000 * runtimeState.reconnectAttempts, 3000));
 }
@@ -463,6 +512,14 @@ function installRuntimeListeners() {
 
   window.addEventListener('offline', () => {
     runtimeState.websocketFailures += 1;
+    runtimeState.ready = false;
+    runtimeState.loading = false;
+    runtimeState.reconnectExhausted = false;
+    recordRuntimeEvent({
+      type: 'websocket_disconnect',
+      providerId: 'puter',
+      message: 'browser offline',
+    });
     setConnectionState('disconnected');
   });
   window.addEventListener('online', () => {
@@ -472,6 +529,11 @@ function installRuntimeListeners() {
     if (isConnectionLikeError(event.message || event.error)) {
       runtimeState.websocketFailures += 1;
       setConnectionState('degraded');
+      recordRuntimeEvent({
+        type: 'websocket_disconnect',
+        providerId: 'puter',
+        message: String(event.message || 'window error'),
+      });
       scheduleReconnect();
     }
   });
@@ -479,6 +541,11 @@ function installRuntimeListeners() {
     if (isConnectionLikeError(event.reason)) {
       runtimeState.websocketFailures += 1;
       setConnectionState('degraded');
+      recordRuntimeEvent({
+        type: 'websocket_disconnect',
+        providerId: 'puter',
+        message: event.reason instanceof Error ? event.reason.message : String(event.reason || 'unhandled rejection'),
+      });
       scheduleReconnect();
     }
   });
@@ -504,6 +571,7 @@ export function resetPuterRuntimeForTests() {
     authState: 'unknown',
     reconnectAttempts: 0,
     websocketFailures: 0,
+    reconnectExhausted: false,
     lastReconnectAt: null,
     lastConnectionChangeAt: null,
     lastTimeoutAt: null,

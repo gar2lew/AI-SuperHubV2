@@ -46,6 +46,10 @@ export interface StreamOwner {
   conversationId?: string;
   providerId?: string;
   modelId?: string;
+  runtimeModelId?: string;
+  fallbackChain?: string[];
+  retryCount?: number;
+  reconnectCount?: number;
 }
 
 export interface StreamDiagnostics {
@@ -84,6 +88,7 @@ export class StreamEngine {
   private owner?: StreamOwner;
   private seenSequences = new Set<number>();
   private lastSequence = -1;
+  private terminalStatus: 'completed' | 'errored' | 'aborted' | null = null;
 
   constructor(callbacks: StreamCallbacks, options: StreamEngineOptions = {}, owner?: StreamOwner) {
     this.callbacks = callbacks;
@@ -101,12 +106,17 @@ export class StreamEngine {
     this.chunkCount = 0;
     this.sequence = 0;
     this.lastSequence = -1;
+    this.terminalStatus = null;
     this.seenSequences.clear();
     recordStreamStart({
       streamId: this.owner?.streamId ?? 'unowned-stream',
       conversationId: this.owner?.conversationId,
       providerId: this.owner?.providerId ?? 'unknown',
       modelId: this.owner?.modelId ?? 'unknown',
+      runtimeModelId: this.owner?.runtimeModelId,
+      fallbackChain: this.owner?.fallbackChain,
+      retryCount: this.owner?.retryCount,
+      reconnectCount: this.owner?.reconnectCount,
     });
     this.startTimeout();
   }
@@ -183,6 +193,25 @@ export class StreamEngine {
     this.callbacks.onBatch(batch);
   }
 
+  /** Flush pending chunks synchronously before external finalization. */
+  flushPending(): void {
+    this.flush();
+  }
+
+  /** Mark an externally finalized stream complete without invoking callbacks again. */
+  completeExternally(): void {
+    if (!this.isRunning || this.terminalStatus) return;
+    this.terminalStatus = 'completed';
+    this.flush();
+    this.isRunning = false;
+    this.clearTimeout();
+    if (this.rafId !== null) {
+      cancelAnimationFrame(this.rafId);
+      this.rafId = null;
+    }
+    recordStreamComplete(this.owner?.streamId ?? 'unowned-stream');
+  }
+
   /** Coalesce consecutive text chunks to reduce re-renders. */
   private coalesceTextChunks(chunks: AIChunk[]): AIChunk[] {
     const result: AIChunk[] = [];
@@ -236,6 +265,8 @@ export class StreamEngine {
 
   /** Signal completion. */
   done(): void {
+    if (!this.isRunning || this.terminalStatus) return;
+    this.terminalStatus = 'completed';
     this.flush();
     this.isRunning = false;
     this.clearTimeout();
@@ -249,6 +280,8 @@ export class StreamEngine {
 
   /** Signal error. */
   error(err: Error): void {
+    if (!this.isRunning || this.terminalStatus) return;
+    this.terminalStatus = 'errored';
     this.flush();
     this.isRunning = false;
     this.clearTimeout();
@@ -272,6 +305,8 @@ export class StreamEngine {
 
   /** Signal abort. */
   abort(): void {
+    if (!this.isRunning || this.terminalStatus) return;
+    this.terminalStatus = 'aborted';
     this.flush();
     this.isRunning = false;
     this.clearTimeout();

@@ -23,6 +23,7 @@ import {
   recordPuterFallbackEvent,
   resetPuterConnectionStateForRetry,
   resetPuterRuntimeForTests,
+  safePuterChat,
 } from "@/lib/providers/puter/runtime";
 import { waitForPuter } from "@/lib/providers/puter";
 import { streamImageGeneration } from "@/lib/providers/puter/image";
@@ -378,6 +379,59 @@ describe("provider routing and diagnostics state", () => {
     resetPuterConnectionStateForRetry();
     expect(getPuterProviderStatus().runtime).toMatchObject({
       connectionState: "reconnecting",
+      error: null,
+    });
+  });
+
+  it("marks reconnect exhaustion without leaving the runtime actively reconnecting", async () => {
+    window.puter = {
+      ai: {
+        chat: () => Promise.resolve("ok"),
+      },
+      auth: {
+        getUser: () => Promise.reject(new Error("session expired")),
+      },
+    };
+
+    await waitForPuter();
+    window.dispatchEvent(new ErrorEvent("error", { message: "WebSocket connection closed" }));
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.advanceTimersByTimeAsync(2_000);
+    await vi.advanceTimersByTimeAsync(3_000);
+
+    expect(getPuterProviderStatus().runtime).toMatchObject({
+      authState: "expired",
+      connectionState: "connected",
+      reconnectAttempts: 3,
+      reconnectExhausted: true,
+      websocketFailures: 1,
+    });
+    expect(getPuterProviderStatus().runtime.connectionState).not.toBe("reconnecting");
+  });
+
+  it("clears reconnect exhaustion after a successful provider operation", async () => {
+    window.puter = {
+      ai: {
+        chat: () => Promise.resolve("ok"),
+      },
+      auth: {
+        getUser: () => Promise.reject(new Error("session expired")),
+      },
+    };
+
+    await waitForPuter();
+    window.dispatchEvent(new ErrorEvent("error", { message: "WebSocket connection closed" }));
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.advanceTimersByTimeAsync(2_000);
+    await vi.advanceTimersByTimeAsync(3_000);
+
+    expect(getPuterProviderStatus().runtime.reconnectExhausted).toBe(true);
+    await safePuterChat(messages, { model: "claude-sonnet-4" });
+
+    expect(getPuterProviderStatus().runtime).toMatchObject({
+      connectionState: "connected",
+      reconnectAttempts: 0,
+      reconnectExhausted: false,
       error: null,
     });
   });

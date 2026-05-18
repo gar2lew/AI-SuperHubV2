@@ -1,7 +1,11 @@
 
 import { Bot } from 'lucide-react';
 
-export function TypingIndicator() {
+interface TypingIndicatorProps {
+  status?: string;
+}
+
+export function TypingIndicator({ status }: TypingIndicatorProps) {
   return (
     <div className="typing-indicator flex gap-3 sm:gap-4" role="status" aria-label="Assistant is thinking">
       <div className="avatar-token is-assistant shrink-0 w-8 h-8 flex items-center justify-center text-accent">
@@ -13,6 +17,11 @@ export function TypingIndicator() {
           <span className="w-2 h-2 rounded-full bg-accent animate-pulse-dot-delay-1" />
           <span className="w-2 h-2 rounded-full bg-accent animate-pulse-dot-delay-2" />
         </div>
+        {status && (
+          <p className="mt-2 text-xs text-text-muted" aria-live="polite">
+            {status}
+          </p>
+        )}
         <span className="sr-only">Assistant is preparing a response</span>
       </div>
     </div>
