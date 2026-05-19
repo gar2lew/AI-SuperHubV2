@@ -125,6 +125,79 @@ describe("executeChatRequest", () => {
     expect(testDeps.finalizeStream).toHaveBeenCalledWith("conversation-1", "stream-1");
   });
 
+  it("captures expired Puter auth as a bounded pending replay without provider fallback", async () => {
+    const primary = route("puter", [], true);
+    primary.provider.stream = async function* () {
+      throw new Error("Puter runtime unavailable: expired-session");
+    };
+    const fallback = route("ollama", [{ type: "text", content: "fallback answer" }]);
+    const testDeps = deps(primary, fallback);
+    testDeps.registerPendingAuthReplay = vi.fn();
+    testDeps.markInterrupted = vi.fn();
+
+    const result = await executeChatRequest({
+      conversation: conversation(),
+      contentParts: content,
+      prompt: "hello",
+      selectedModel: "puter-gpt-5",
+      selectedProvider: "puter",
+    }, testDeps);
+
+    expect(result).toMatchObject({ status: "auth-required", streamId: "stream-1" });
+    expect(testDeps.registerPendingAuthReplay).toHaveBeenCalledWith(expect.objectContaining({
+      conversationId: "conversation-1",
+      prompt: "hello",
+      selectedModel: "puter-gpt-5",
+      selectedProvider: "puter",
+      providerId: "puter",
+      modelId: "puter-model",
+      runtimeModelId: "puter-runtime",
+      reason: "expired-session",
+    }));
+    expect(testDeps.markInterrupted).toHaveBeenCalledWith("auth-required");
+    expect(testDeps.recordFailure).not.toHaveBeenCalledWith("puter");
+    expect(testDeps.beginFallback).not.toHaveBeenCalled();
+    expect(testDeps.appendChunk).toHaveBeenCalledWith({
+      type: "status",
+      content: "Sign in required. Restore Puter auth to replay this request.",
+    });
+    expect(testDeps.finalizeStream).toHaveBeenCalledWith("conversation-1", "stream-1");
+  });
+
+  it("replays an auth-recovered request without duplicating the original user message", async () => {
+    const primary = route("puter", [{ type: "text", content: "answer" }]);
+    const testDeps = deps(primary);
+    let streamedMessages: Message[] = [];
+    primary.provider.stream = async function* (messages) {
+      streamedMessages = messages;
+      yield { type: "text", content: "answer" };
+    };
+
+    await executeChatRequest({
+      conversation: conversation([{ id: "user-1", role: "user", content, createdAt: 1 }]),
+      contentParts: content,
+      prompt: "hello",
+      selectedModel: "puter-gpt-5",
+      selectedProvider: "puter",
+      skipUserMessage: true,
+      replayAttempt: 1,
+    }, testDeps);
+
+    expect(testDeps.addMessage).not.toHaveBeenCalledWith("conversation-1", {
+      role: "user",
+      content,
+    });
+    expect(streamedMessages.filter((message) => message.role === "user")).toHaveLength(1);
+    expect(testDeps.startStreaming).toHaveBeenCalledWith(
+      "conversation-1",
+      "puter",
+      "puter-model",
+      "puter-runtime",
+      "hello"
+    );
+    expect(testDeps.finalizeStream).toHaveBeenCalledWith("conversation-1", "stream-1");
+  });
+
   it("persists a chat-capability error instead of starting a stream for non-chat models", async () => {
     const testDeps = deps(null);
     testDeps.getModel = vi.fn(() => ({ label: "Image Only", capabilities: ["image"] as Capability[] }));

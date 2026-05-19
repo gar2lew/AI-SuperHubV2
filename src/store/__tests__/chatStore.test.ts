@@ -20,6 +20,7 @@ function resetChatStore() {
     pipelinesById: {},
     contextFramesById: {},
     activeContextFrameId: null,
+    pendingAuthReplay: null,
   });
   useChatStore.persist.clearStorage();
 }
@@ -60,6 +61,75 @@ describe("chatStore", () => {
       modelId: "puter-claude-sonnet-4",
       messages: [],
     });
+  });
+
+  it("stores a bounded pending auth replay request with metadata-only attachments", () => {
+    const conversationId = useChatStore.getState().createConversation();
+
+    useChatStore.getState().registerPendingAuthReplay({
+      conversationId,
+      contentParts: [
+        { type: "text", text: "retry after sign in" },
+        {
+          type: "file",
+          name: "notes.md",
+          mimeType: "text/markdown",
+          size: 42,
+          persistenceState: "available",
+        },
+      ],
+      prompt: "retry after sign in",
+      selectedModel: "puter-gpt-5",
+      selectedProvider: "puter",
+      providerId: "puter",
+      modelId: "puter-gpt-5",
+      runtimeModelId: "gpt-5",
+      reason: "expired-session",
+    });
+
+    const replay = useChatStore.getState().getPendingAuthReplay();
+
+    expect(replay).toMatchObject({
+      conversationId,
+      prompt: "retry after sign in",
+      selectedModel: "puter-gpt-5",
+      selectedProvider: "puter",
+      status: "pending",
+      attemptCount: 0,
+      maxAttempts: 1,
+      reason: "expired-session",
+    });
+    expect(replay?.contentParts[1]).toMatchObject({
+      type: "file",
+      name: "notes.md",
+      persistenceState: "metadata-only",
+    });
+  });
+
+  it("bounds auth replay attempts and records deterministic success or failure state", () => {
+    const conversationId = useChatStore.getState().createConversation();
+    useChatStore.getState().registerPendingAuthReplay({
+      conversationId,
+      contentParts: [{ type: "text", text: "hello" }],
+      prompt: "hello",
+      selectedModel: "puter-gpt-5",
+      selectedProvider: "puter",
+      providerId: "puter",
+      modelId: "puter-gpt-5",
+      reason: "auth-required",
+    });
+
+    const replay = useChatStore.getState().beginPendingAuthReplay();
+    expect(replay).toMatchObject({ status: "replaying", attemptCount: 1 });
+    expect(useChatStore.getState().beginPendingAuthReplay()).toBeNull();
+
+    useChatStore.getState().markPendingAuthReplayFailed(new Error("still expired"));
+    expect(useChatStore.getState().getPendingAuthReplay()).toMatchObject({
+      status: "failed",
+      attemptCount: 1,
+      error: "still expired",
+    });
+    expect(useChatStore.getState().beginPendingAuthReplay()).toBeNull();
   });
 
   it("retargets activeConversationId after deleting the active conversation", () => {

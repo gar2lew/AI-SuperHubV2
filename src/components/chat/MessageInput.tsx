@@ -4,10 +4,16 @@ import { Send, Square, Paperclip, Image, FileText } from 'lucide-react';
 import { useChatStore } from '@/store/chatStore';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useWorkspaceStore } from '@/store/workspaceStore';
+import type { ProviderId } from '@/types';
 
 import { textContent } from '@/lib/utils';
 import { executeChatRequest } from '@/lib/core/chat-orchestrator';
-import { resetPuterConnectionStateForRetry } from '@/lib/providers/puter/runtime';
+import {
+  recordPuterAuthReplayFailed,
+  recordPuterAuthReplayStarted,
+  recordPuterAuthReplaySucceeded,
+  resetPuterConnectionStateForRetry,
+} from '@/lib/providers/puter/runtime';
 import { recordRuntimeEvent } from '@/lib/telemetry/runtimeTelemetry';
 
 interface ComposerAttachment {
@@ -23,7 +29,7 @@ export function MessageInput() {
   const [input, setInput] = useState('');
   const [retryOverride, setRetryOverride] = useState<{
     prompt: string;
-    providerId?: string;
+    providerId?: ProviderId;
     modelId?: string;
   } | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -41,6 +47,8 @@ export function MessageInput() {
   const finalizeStream = useChatStore((s) => s.finalizeStream);
   const stopStreaming = useChatStore((s) => s.stopStreaming);
   const setAbortController = useChatStore((s) => s.setAbortController);
+  const registerPendingAuthReplay = useChatStore((s) => s.registerPendingAuthReplay);
+  const markInterrupted = useChatStore((s) => s.markInterrupted);
   const setDraft = useChatStore((s) => s.setDraft);
   const clearDraft = useChatStore((s) => s.clearDraft);
   const isStreaming = useChatStore((s) => s.isStreaming);
@@ -79,13 +87,69 @@ export function MessageInput() {
         modelId: detail.modelId,
         message: 'chat retry requested',
       });
-      setRetryOverride({ prompt, providerId: detail.providerId, modelId: detail.modelId });
+      setRetryOverride({ prompt, providerId: detail.providerId as ProviderId | undefined, modelId: detail.modelId });
       setInput(prompt);
       requestAnimationFrame(() => textareaRef.current?.focus());
     };
 
     window.addEventListener('ai-superhub:retry-chat', handleRetry);
     return () => window.removeEventListener('ai-superhub:retry-chat', handleRetry);
+  }, []);
+
+  useEffect(() => {
+    const handleAuthReplayReady = async () => {
+      const state = useChatStore.getState();
+      if (state.isStreaming) return;
+      const replay = state.beginPendingAuthReplay();
+      if (!replay) return;
+      const conversation = state.conversations.find((item) => item.id === replay.conversationId);
+      if (!conversation) {
+        state.markPendingAuthReplayFailed(new Error('Replay conversation is no longer available'));
+        recordPuterAuthReplayFailed('Replay conversation is no longer available');
+        return;
+      }
+
+      recordPuterAuthReplayStarted();
+      try {
+        const result = await executeChatRequest(
+          {
+            conversation,
+            contentParts: replay.contentParts,
+            prompt: replay.prompt,
+            selectedModel: replay.selectedModel,
+            selectedProvider: replay.selectedProvider,
+            skipUserMessage: true,
+            replayAttempt: replay.attemptCount,
+            workspaceContext: useWorkspaceStore.getState().getInjectableContext(),
+          },
+          {
+            addMessage: state.addMessage,
+            startStreaming: state.startStreaming,
+            appendChunk: state.appendChunk,
+            beginFallback: state.beginFallback,
+            finalizeStream: state.finalizeStream,
+            setAbortController: state.setAbortController,
+            getCurrentStreamId: () => useChatStore.getState().getCurrentStreamId(),
+            registerPendingAuthReplay: state.registerPendingAuthReplay,
+            markInterrupted: state.markInterrupted,
+          }
+        );
+        if (result.status === 'completed') {
+          useChatStore.getState().markPendingAuthReplaySucceeded();
+          recordPuterAuthReplaySucceeded();
+        } else if (result.status === 'auth-required') {
+          const error = new Error(result.reason);
+          useChatStore.getState().markPendingAuthReplayFailed(error);
+          recordPuterAuthReplayFailed(error);
+        }
+      } catch (error) {
+        useChatStore.getState().markPendingAuthReplayFailed(error);
+        recordPuterAuthReplayFailed(error);
+      }
+    };
+
+    window.addEventListener('ai-superhub:auth-replay-ready', handleAuthReplayReady);
+    return () => window.removeEventListener('ai-superhub:auth-replay-ready', handleAuthReplayReady);
   }, []);
 
   const handleSend = useCallback(async () => {
@@ -143,6 +207,8 @@ export function MessageInput() {
         finalizeStream,
         setAbortController,
         getCurrentStreamId: () => useChatStore.getState().getCurrentStreamId(),
+        registerPendingAuthReplay,
+        markInterrupted,
       }
     );
   }, [
@@ -156,6 +222,8 @@ export function MessageInput() {
     beginFallback,
     finalizeStream,
     setAbortController,
+    registerPendingAuthReplay,
+    markInterrupted,
     clearDraft,
     selectedProvider,
     selectedModel,

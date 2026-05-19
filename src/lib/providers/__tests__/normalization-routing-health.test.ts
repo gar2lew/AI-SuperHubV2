@@ -23,6 +23,10 @@ import {
   getPuterDiscoveredModels,
   beginPuterAuthBootstrap,
   beginPuterRuntimeBootstrap,
+  recordPuterAuthReplayFailed,
+  recordPuterAuthReplayPending,
+  recordPuterAuthReplayStarted,
+  recordPuterAuthReplaySucceeded,
   recordPuterStreamAbort,
   recordPuterFallbackEvent,
   resetPuterConnectionStateForRetry,
@@ -913,6 +917,32 @@ describe("provider routing and diagnostics state", () => {
       authRecoveryState: "recovered",
       authRecoveryAttempts: 1,
       discoveredModelCount: 1,
+    });
+  });
+
+  it("tracks auth replay lifecycle separately from auth bootstrap state", () => {
+    recordPuterAuthReplayPending("expired-session");
+    recordPuterAuthReplayStarted();
+    recordPuterAuthReplayFailed(new Error("still expired"));
+
+    expect(getPuterProviderStatus().runtime).toMatchObject({
+      executionMode: "mock",
+      modeReason: "expired-session",
+      authRecoveryState: "required",
+      authReplayState: "failed",
+      pendingAuthReplayCount: 1,
+      authReplayAttempts: 1,
+      authReplayError: "still expired",
+    });
+
+    recordPuterAuthReplayStarted();
+    recordPuterAuthReplaySucceeded();
+
+    expect(getPuterProviderStatus().runtime).toMatchObject({
+      authReplayState: "succeeded",
+      pendingAuthReplayCount: 0,
+      authReplayAttempts: 2,
+      authReplayError: null,
     });
   });
 

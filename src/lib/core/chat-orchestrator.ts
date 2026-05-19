@@ -6,7 +6,10 @@ import { modelRegistry } from '@/lib/models/registry';
 import { recordProviderFallbackTransition } from '@/lib/providers/analytics';
 import { formatProviderError } from '@/lib/providers/errors';
 import { recordFailure } from '@/lib/providers/health';
-import { recordPuterFallbackEvent } from '@/lib/providers/puter/runtime';
+import {
+  recordPuterAuthReplayPending,
+  recordPuterFallbackEvent,
+} from '@/lib/providers/puter/runtime';
 import { resolveRoute, type RoutingOptions, type RoutingResult } from '@/lib/routing/fallback-router';
 
 interface ChatModelSummary {
@@ -16,8 +19,20 @@ interface ChatModelSummary {
 
 export interface ChatRetryOverride {
   prompt: string;
-  providerId?: string;
+  providerId?: ProviderId;
   modelId?: string;
+}
+
+export interface PendingAuthReplayInput {
+  conversationId: string;
+  contentParts: ContentPart[];
+  prompt: string;
+  selectedModel: string;
+  selectedProvider: ProviderId;
+  providerId: string;
+  modelId: string;
+  runtimeModelId?: string;
+  reason: 'expired-session' | 'auth-required';
 }
 
 export interface ExecuteChatRequestOptions {
@@ -28,6 +43,8 @@ export interface ExecuteChatRequestOptions {
   selectedProvider: ProviderId;
   retryOverride?: ChatRetryOverride | null;
   workspaceContext?: string;
+  skipUserMessage?: boolean;
+  replayAttempt?: number;
 }
 
 export interface ChatRequestDependencies {
@@ -50,12 +67,16 @@ export interface ChatRequestDependencies {
   recordFailure?: (providerId: string, reason?: 'error' | 'timeout') => void;
   recordProviderFallbackTransition?: (fromProviderId: string, toProviderId: string) => void;
   recordPuterFallbackEvent?: (fromProviderId?: string, toProviderId?: string) => void;
+  recordPuterAuthReplayPending?: (reason: 'expired-session' | 'auth-required') => void;
+  registerPendingAuthReplay?: (request: PendingAuthReplayInput) => void;
+  markInterrupted?: (reason: string) => void;
   recordClientError?: typeof recordClientError;
   formatProviderError?: (error: unknown, fallback?: string) => string;
 }
 
 export type ChatRequestResult =
   | { status: 'completed'; streamId?: string }
+  | { status: 'auth-required'; streamId: string; reason: 'expired-session' | 'auth-required' }
   | { status: 'rejected'; reason: 'model-capability' | 'no-route' }
   | { status: 'stale'; streamId: string };
 
@@ -69,6 +90,7 @@ const defaultDependencies = {
   recordFailure,
   recordProviderFallbackTransition,
   recordPuterFallbackEvent,
+  recordPuterAuthReplayPending,
   recordClientError,
   formatProviderError,
 };
@@ -88,15 +110,19 @@ export async function executeChatRequest(
     content: options.contentParts,
     createdAt: Date.now(),
   };
-  const conversationWithPendingMessage: Conversation = {
-    ...options.conversation,
-    messages: [...options.conversation.messages, userMessageForContext],
-  };
+  const conversationWithPendingMessage: Conversation = options.skipUserMessage
+    ? options.conversation
+    : {
+        ...options.conversation,
+        messages: [...options.conversation.messages, userMessageForContext],
+      };
 
-  deps.addMessage(options.conversation.id, {
-    role: 'user',
-    content: options.contentParts,
-  });
+  if (!options.skipUserMessage) {
+    deps.addMessage(options.conversation.id, {
+      role: 'user',
+      content: options.contentParts,
+    });
+  }
 
   const selectedModelRecord = deps.getModel(routeModelId);
   if (selectedModelRecord && !selectedModelRecord.capabilities.includes('chat')) {
@@ -161,6 +187,29 @@ export async function executeChatRequest(
         phase: 'primary',
       },
     });
+    const authRecoveryReason = getAuthRecoveryReason(err);
+    if (authRecoveryReason) {
+      deps.recordPuterAuthReplayPending?.(authRecoveryReason);
+      deps.registerPendingAuthReplay?.({
+        conversationId: options.conversation.id,
+        contentParts: options.contentParts,
+        prompt: options.prompt,
+        selectedModel: routeModelId,
+        selectedProvider: routeProviderId,
+        providerId: route.provider.id,
+        modelId: route.modelId,
+        runtimeModelId: route.runtimeModelId,
+        reason: authRecoveryReason,
+      });
+      deps.markInterrupted?.('auth-required');
+      deps.appendChunk({
+        type: 'status',
+        content: 'Sign in required. Restore Puter auth to replay this request.',
+      });
+      deps.finalizeStream(options.conversation.id, streamId);
+      return { status: 'auth-required', streamId, reason: authRecoveryReason };
+    }
+
     console.error('Stream failed:', err);
     deps.recordFailure(route.provider.id);
 
@@ -181,6 +230,13 @@ export async function executeChatRequest(
     deps.finalizeStream(options.conversation.id, streamId);
     return { status: 'completed', streamId };
   }
+}
+
+function getAuthRecoveryReason(error: unknown): 'expired-session' | 'auth-required' | null {
+  const message = error instanceof Error ? error.message : String(error || '');
+  if (/expired-session|expired session|session expired/i.test(message)) return 'expired-session';
+  if (/auth-required|unauthenticated|sign.?in|required auth|login required/i.test(message)) return 'auth-required';
+  return null;
 }
 
 async function streamRoute(

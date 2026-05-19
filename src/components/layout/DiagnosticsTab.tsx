@@ -48,6 +48,7 @@ export function DiagnosticsTab() {
   const puterStatus = getPuterProviderStatus();
   const routeDiagnostics = getLastRoutingDiagnostics();
   const diagnostics = useChatStore((s) => s.streamEngine?.getDiagnostics());
+  const pendingAuthReplay = useChatStore((s) => s.pendingAuthReplay);
   const clientErrors = useSyncExternalStore(
     subscribeClientErrors,
     getClientErrorSnapshot,
@@ -75,6 +76,9 @@ export function DiagnosticsTab() {
     try {
       const result = await beginPuterAuthBootstrap();
       setAuthActionStatus(result.ok ? 'done' : 'failed');
+      if (result.ok) {
+        window.dispatchEvent(new CustomEvent('ai-superhub:auth-replay-ready'));
+      }
     } catch {
       setAuthActionStatus('failed');
     }
@@ -85,6 +89,9 @@ export function DiagnosticsTab() {
     try {
       const result = await validateRuntimeExecution();
       setAuthActionStatus(result.available ? 'done' : 'failed');
+      if (result.available) {
+        window.dispatchEvent(new CustomEvent('ai-superhub:auth-replay-ready'));
+      }
     } catch {
       setAuthActionStatus('failed');
     }
@@ -209,7 +216,9 @@ export function DiagnosticsTab() {
                 <p className="mt-0.5 text-[11px] leading-4 text-text-muted">
                   {authRecovering
                     ? 'Puter sign-in is in progress. Runtime will revalidate before returning to live mode.'
-                    : 'Use a signed-in Puter session to restore live provider execution.'}
+                    : pendingAuthReplay
+                      ? 'Sign in to replay the pending request without duplicating the conversation.'
+                      : 'Use a signed-in Puter session to restore live provider execution.'}
                 </p>
               </div>
               <div className="flex shrink-0 gap-1.5">
@@ -306,6 +315,26 @@ export function DiagnosticsTab() {
           {puterStatus.runtime.authRecoveryError && (
             <div className="rounded-md border border-warning/25 bg-warning/10 px-2 py-1 text-[11px] text-warning">
               {puterStatus.runtime.authRecoveryError}
+            </div>
+          )}
+          <div className="flex justify-between">
+            <span className="text-text-muted">Replay</span>
+            <span className={pendingAuthReplay ? 'text-warning' : 'text-text-secondary'}>
+              {pendingAuthReplay?.status ?? puterStatus.runtime.authReplayState}
+            </span>
+          </div>
+          <div className="grid grid-cols-2 gap-1 text-[10px] text-text-muted">
+            <span>Pending {puterStatus.runtime.pendingAuthReplayCount}</span>
+            <span>Attempts {puterStatus.runtime.authReplayAttempts}</span>
+          </div>
+          {pendingAuthReplay && (
+            <div className="rounded-md border border-warning/25 bg-warning/10 px-2 py-1 text-[11px] text-warning">
+              Replay {pendingAuthReplay.attemptCount}/{pendingAuthReplay.maxAttempts} · {pendingAuthReplay.reason}
+            </div>
+          )}
+          {puterStatus.runtime.authReplayError && (
+            <div className="rounded-md border border-warning/25 bg-warning/10 px-2 py-1 text-[11px] text-warning">
+              {puterStatus.runtime.authReplayError}
             </div>
           )}
           <div className="flex justify-between">

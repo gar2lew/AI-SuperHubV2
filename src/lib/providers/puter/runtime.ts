@@ -31,6 +31,7 @@ export type PuterConnectionState =
   | 'reconnecting';
 export type PuterAuthState = 'unknown' | 'authenticated' | 'unauthenticated' | 'expired';
 export type PuterAuthRecoveryState = 'idle' | 'required' | 'recovering' | 'recovered' | 'failed';
+export type PuterAuthReplayState = 'idle' | 'pending' | 'replaying' | 'succeeded' | 'failed';
 
 interface PuterAI {
   chat?: (messages: ReturnType<typeof formatMessages>, options: SafeChatOptions & { system?: string }) => unknown;
@@ -144,6 +145,13 @@ export interface PuterRuntimeState {
   sdkLoadError: string | null;
   sdkAlreadyPresent: boolean;
   sdkRetryCount: number;
+  authReplayState: PuterAuthReplayState;
+  pendingAuthReplayCount: number;
+  authReplayAttempts: number;
+  lastAuthReplayAt: number | null;
+  lastAuthReplaySuccessAt: number | null;
+  lastAuthReplayFailureAt: number | null;
+  authReplayError: string | null;
 }
 
 export interface SafeChatOptions {
@@ -236,6 +244,13 @@ const runtimeState: PuterRuntimeState = {
   sdkLoadError: null,
   sdkAlreadyPresent: false,
   sdkRetryCount: 0,
+  authReplayState: 'idle',
+  pendingAuthReplayCount: 0,
+  authReplayAttempts: 0,
+  lastAuthReplayAt: null,
+  lastAuthReplaySuccessAt: null,
+  lastAuthReplayFailureAt: null,
+  authReplayError: null,
 };
 
 let puterLoadPromise: Promise<void> | null = null;
@@ -295,6 +310,58 @@ function markAuthRecoveryRequired(reason: string) {
   runtimeState.authRecoveryError = null;
   runtimeState.lastRecoveryDecision = reason;
   setPuterRuntimeMode('mock', reason);
+}
+
+export function recordPuterAuthReplayPending(reason: 'expired-session' | 'auth-required') {
+  runtimeState.authReplayState = 'pending';
+  runtimeState.pendingAuthReplayCount += 1;
+  runtimeState.authReplayError = null;
+  runtimeState.lastRecoveryDecision = `auth-replay-pending:${reason}`;
+  markAuthRecoveryRequired(reason);
+  recordRuntimeEvent({
+    type: 'runtime_recovery',
+    providerId: 'puter',
+    message: `auth replay pending: ${reason}`,
+  });
+}
+
+export function recordPuterAuthReplayStarted() {
+  runtimeState.authReplayState = 'replaying';
+  runtimeState.authReplayAttempts += 1;
+  runtimeState.lastAuthReplayAt = now();
+  runtimeState.authReplayError = null;
+  runtimeState.lastRecoveryDecision = 'auth-replay-started';
+  recordRuntimeEvent({
+    type: 'retry_triggered',
+    providerId: 'puter',
+    message: 'auth replay started',
+  });
+}
+
+export function recordPuterAuthReplaySucceeded() {
+  runtimeState.authReplayState = 'succeeded';
+  runtimeState.pendingAuthReplayCount = Math.max(0, runtimeState.pendingAuthReplayCount - 1);
+  runtimeState.lastAuthReplaySuccessAt = now();
+  runtimeState.authReplayError = null;
+  runtimeState.lastRecoveryDecision = 'auth-replay-succeeded';
+  recordRuntimeEvent({
+    type: 'runtime_recovery',
+    providerId: 'puter',
+    message: 'auth replay succeeded',
+  });
+}
+
+export function recordPuterAuthReplayFailed(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  runtimeState.authReplayState = 'failed';
+  runtimeState.lastAuthReplayFailureAt = now();
+  runtimeState.authReplayError = message;
+  runtimeState.lastRecoveryDecision = 'auth-replay-failed';
+  recordRuntimeEvent({
+    type: 'runtime_auth_failure',
+    providerId: 'puter',
+    message,
+  });
 }
 
 function markAuthRecoveryRecovered() {
@@ -1229,6 +1296,13 @@ export function resetPuterRuntimeForTests() {
     sdkLoadError: null,
     sdkAlreadyPresent: false,
     sdkRetryCount: 0,
+    authReplayState: 'idle',
+    pendingAuthReplayCount: 0,
+    authReplayAttempts: 0,
+    lastAuthReplayAt: null,
+    lastAuthReplaySuccessAt: null,
+    lastAuthReplayFailureAt: null,
+    authReplayError: null,
   } satisfies PuterRuntimeState);
   discoveredModelsCache = null;
   puterLoadPromise = null;

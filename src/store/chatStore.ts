@@ -23,8 +23,9 @@ import type {
   ContentPart,
   StreamLifecycleEvent,
   StreamLifecycleState,
+  ProviderId,
 } from '@/types';
-import { generateId, messageToTitle, finalizeChunks } from '@/lib/utils';
+import { generateId, messageToTitle, finalizeChunks, textContent } from '@/lib/utils';
 import { DEFAULT_PRESET_ID, resolvePresetToModel } from '@/lib/models/presets';
 import { getChunkSequence, StreamEngine } from '@/lib/streaming/stream-engine';
 import { recordSuccess, recordFailure } from '@/lib/providers/health';
@@ -45,6 +46,29 @@ export interface ConversationDraft {
   updatedAt: number;
 }
 
+export type PendingAuthReplayStatus = 'pending' | 'replaying' | 'succeeded' | 'failed';
+
+export interface PendingAuthReplayRequest {
+  replayId: string;
+  conversationId: string;
+  contentParts: ContentPart[];
+  prompt: string;
+  selectedModel: string;
+  selectedProvider: ProviderId;
+  providerId: string;
+  modelId: string;
+  runtimeModelId?: string;
+  reason: 'expired-session' | 'auth-required';
+  status: PendingAuthReplayStatus;
+  createdAt: number;
+  updatedAt: number;
+  attemptCount: number;
+  maxAttempts: number;
+  lastAttemptAt?: number;
+  completedAt?: number;
+  error?: string;
+}
+
 interface ChatState {
   conversations: Conversation[];
   activeConversationId: string | null;
@@ -57,6 +81,7 @@ interface ChatState {
   pipelinesById: Record<string, ExecutionPipeline>;
   contextFramesById: Record<string, ContextFrame>;
   activeContextFrameId: string | null;
+  pendingAuthReplay: PendingAuthReplayRequest | null;
   streamEngine: StreamEngine | null;
   abortController: AbortController | null;
   // Stream ownership for zombie prevention
@@ -74,6 +99,22 @@ interface ChatState {
   clearDraft: (conversationId: string) => void;
   addMessage: (conversationId: string, message: Omit<Message, 'id' | 'createdAt'> & { id?: string }) => string;
   updateMessage: (conversationId: string, messageId: string, updates: Partial<Message>) => void;
+  registerPendingAuthReplay: (request: {
+    conversationId: string;
+    contentParts: ContentPart[];
+    prompt: string;
+    selectedModel: string;
+    selectedProvider: ProviderId;
+    providerId: string;
+    modelId: string;
+    runtimeModelId?: string;
+    reason: 'expired-session' | 'auth-required';
+  }) => void;
+  beginPendingAuthReplay: () => PendingAuthReplayRequest | null;
+  markPendingAuthReplaySucceeded: () => void;
+  markPendingAuthReplayFailed: (error: unknown) => void;
+  clearPendingAuthReplay: () => void;
+  getPendingAuthReplay: () => PendingAuthReplayRequest | null;
   createExecution: (input: {
     messageId?: string;
     parentExecutionId?: string | null;
@@ -398,6 +439,10 @@ function generatePipelineId(): string {
 
 function generateContextFrameId(): string {
   return `frame-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+}
+
+function generateAuthReplayId(): string {
+  return `auth-replay-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
 function serializeAttachmentMetadata(part: Extract<ContentPart, { type: 'image' | 'audio' | 'file' }>) {
@@ -976,6 +1021,39 @@ function sanitizeDrafts(drafts: Partial<Record<string, Partial<ConversationDraft
   );
 }
 
+function sanitizePendingAuthReplay(
+  replay: Partial<PendingAuthReplayRequest> | null | undefined,
+  conversations: Conversation[]
+): PendingAuthReplayRequest | null {
+  if (!replay || typeof replay !== 'object') return null;
+  if (replay.status !== 'pending' && replay.status !== 'replaying' && replay.status !== 'failed') return null;
+  if (!replay.conversationId || !conversations.some((conversation) => conversation.id === replay.conversationId)) return null;
+  if (typeof replay.prompt !== 'string' || !replay.prompt.trim()) return null;
+  const contentParts = Array.isArray(replay.contentParts)
+    ? serializeContentForPersistence(replay.contentParts as ContentPart[])
+    : textContent(replay.prompt);
+  return {
+    replayId: replay.replayId ?? generateAuthReplayId(),
+    conversationId: replay.conversationId,
+    contentParts,
+    prompt: replay.prompt,
+    selectedModel: replay.selectedModel ?? replay.modelId ?? 'puter-claude-sonnet-4',
+    selectedProvider: (replay.selectedProvider ?? replay.providerId ?? 'puter') as ProviderId,
+    providerId: replay.providerId ?? 'puter',
+    modelId: replay.modelId ?? replay.selectedModel ?? 'puter-claude-sonnet-4',
+    runtimeModelId: replay.runtimeModelId,
+    reason: replay.reason === 'expired-session' ? 'expired-session' : 'auth-required',
+    status: replay.status === 'replaying' ? 'pending' : replay.status,
+    createdAt: typeof replay.createdAt === 'number' ? replay.createdAt : Date.now(),
+    updatedAt: typeof replay.updatedAt === 'number' ? replay.updatedAt : Date.now(),
+    attemptCount: typeof replay.attemptCount === 'number' ? replay.attemptCount : 0,
+    maxAttempts: typeof replay.maxAttempts === 'number' ? replay.maxAttempts : 1,
+    lastAttemptAt: replay.lastAttemptAt,
+    completedAt: replay.completedAt,
+    error: replay.error,
+  };
+}
+
 type HydratedChatStateInput = Partial<Omit<ChatState, 'executionsById'>> & {
   executionsById?: Record<string, Partial<ExecutionRuntime>>;
 };
@@ -1122,6 +1200,7 @@ export function sanitizeHydratedChatState(state: HydratedChatStateInput): Partia
     pipelinesById: state.pipelinesById && typeof state.pipelinesById === 'object' ? state.pipelinesById : {},
     contextFramesById: state.contextFramesById && typeof state.contextFramesById === 'object' ? state.contextFramesById : {},
     activeContextFrameId: null,
+    pendingAuthReplay: sanitizePendingAuthReplay(state.pendingAuthReplay, conversations),
     streamEngine: null,
     abortController: null,
     currentStreamId: null,
@@ -1142,6 +1221,7 @@ export const useChatStore = create<ChatState>()(
       pipelinesById: {},
       contextFramesById: {},
       activeContextFrameId: null,
+      pendingAuthReplay: null,
       streamEngine: null,
       abortController: null,
       currentStreamId: null,
@@ -2424,6 +2504,110 @@ export const useChatStore = create<ChatState>()(
         }));
       },
 
+      registerPendingAuthReplay: (request) => {
+        const now = Date.now();
+        set((state) => {
+          const activeReplay = state.pendingAuthReplay;
+          if (
+            activeReplay &&
+            activeReplay.status !== 'succeeded' &&
+            activeReplay.conversationId === request.conversationId &&
+            activeReplay.prompt === request.prompt &&
+            activeReplay.providerId === request.providerId &&
+            activeReplay.modelId === request.modelId
+          ) {
+            return {
+              pendingAuthReplay: {
+                ...activeReplay,
+                reason: request.reason,
+                updatedAt: now,
+                status: activeReplay.status === 'replaying' ? 'replaying' : 'pending',
+                error: undefined,
+              },
+            };
+          }
+
+          return {
+            pendingAuthReplay: {
+              replayId: generateAuthReplayId(),
+              conversationId: request.conversationId,
+              contentParts: serializeContentForPersistence(request.contentParts),
+              prompt: request.prompt,
+              selectedModel: request.selectedModel,
+              selectedProvider: request.selectedProvider,
+              providerId: request.providerId,
+              modelId: request.modelId,
+              runtimeModelId: request.runtimeModelId,
+              reason: request.reason,
+              status: 'pending',
+              createdAt: now,
+              updatedAt: now,
+              attemptCount: 0,
+              maxAttempts: 1,
+            },
+          };
+        });
+      },
+
+      beginPendingAuthReplay: () => {
+        const replay = get().pendingAuthReplay;
+        if (!replay || replay.status === 'replaying' || replay.status === 'succeeded') return null;
+        if (replay.attemptCount >= replay.maxAttempts) {
+          set({
+            pendingAuthReplay: {
+              ...replay,
+              status: 'failed',
+              updatedAt: Date.now(),
+              error: 'auth replay attempt limit reached',
+            },
+          });
+          return null;
+        }
+        const next: PendingAuthReplayRequest = {
+          ...replay,
+          status: 'replaying',
+          attemptCount: replay.attemptCount + 1,
+          lastAttemptAt: Date.now(),
+          updatedAt: Date.now(),
+          error: undefined,
+        };
+        set({ pendingAuthReplay: next });
+        return next;
+      },
+
+      markPendingAuthReplaySucceeded: () => {
+        const replay = get().pendingAuthReplay;
+        if (!replay) return;
+        set({
+          pendingAuthReplay: {
+            ...replay,
+            status: 'succeeded',
+            completedAt: Date.now(),
+            updatedAt: Date.now(),
+            error: undefined,
+          },
+        });
+      },
+
+      markPendingAuthReplayFailed: (error) => {
+        const replay = get().pendingAuthReplay;
+        if (!replay) return;
+        set({
+          pendingAuthReplay: {
+            ...replay,
+            status: 'failed',
+            updatedAt: Date.now(),
+            error: error instanceof Error ? error.message : String(error),
+          },
+        });
+      },
+
+      clearPendingAuthReplay: () => {
+        set({ pendingAuthReplay: null });
+      },
+
+      getPendingAuthReplay: () => get().pendingAuthReplay,
+
       startStreaming: (conversationId, providerId, modelId, runtimeModelId, retryPrompt) => {
         if (get().currentStreamId || get().isStreaming) {
           throw new Error('stream already active');
@@ -2909,6 +3093,13 @@ export const useChatStore = create<ChatState>()(
         executionsById: state.executionsById,
         pipelinesById: state.pipelinesById,
         contextFramesById: state.contextFramesById,
+        pendingAuthReplay: state.pendingAuthReplay && state.pendingAuthReplay.status !== 'succeeded'
+          ? {
+              ...state.pendingAuthReplay,
+              contentParts: serializeContentForPersistence(state.pendingAuthReplay.contentParts),
+              status: state.pendingAuthReplay.status === 'replaying' ? 'pending' : state.pendingAuthReplay.status,
+            }
+          : null,
       }),
     }
   )
