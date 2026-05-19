@@ -29,6 +29,7 @@ export type PuterConnectionState =
   | 'timeout'
   | 'reconnecting';
 export type PuterAuthState = 'unknown' | 'authenticated' | 'unauthenticated' | 'expired';
+export type PuterAuthRecoveryState = 'idle' | 'required' | 'recovering' | 'recovered' | 'failed';
 
 interface PuterAI {
   chat?: (messages: ReturnType<typeof formatMessages>, options: SafeChatOptions & { system?: string }) => unknown;
@@ -47,6 +48,7 @@ interface PuterRuntime {
   auth?: {
     isSignedIn?: () => unknown;
     getUser?: () => unknown;
+    signIn?: () => unknown;
   };
 }
 
@@ -129,12 +131,26 @@ export interface PuterRuntimeState {
   deployRefreshRecoveryCount: number;
   lastOfflineRecoveryAt: number | null;
   lastDeploymentRefreshAt: number | null;
+  authRecoveryState: PuterAuthRecoveryState;
+  authBootstrapRequiredAt: number | null;
+  authBootstrapStartedAt: number | null;
+  authBootstrapCompletedAt: number | null;
+  authRecoveryAttempts: number;
+  authRecoveryError: string | null;
 }
 
 export interface SafeChatOptions {
   model?: string;
   stream?: boolean;
   timeoutMs?: number;
+}
+
+export interface AuthBootstrapResult {
+  ok: boolean;
+  authState: PuterAuthState;
+  mode: RuntimeExecutionMode;
+  reason: string | null;
+  error?: string;
 }
 
 const runtimeState: PuterRuntimeState = {
@@ -201,10 +217,17 @@ const runtimeState: PuterRuntimeState = {
   deployRefreshRecoveryCount: 0,
   lastOfflineRecoveryAt: null,
   lastDeploymentRefreshAt: null,
+  authRecoveryState: 'idle',
+  authBootstrapRequiredAt: null,
+  authBootstrapStartedAt: null,
+  authBootstrapCompletedAt: null,
+  authRecoveryAttempts: 0,
+  authRecoveryError: null,
 };
 
 let puterLoadPromise: Promise<void> | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let authBootstrapPromise: Promise<AuthBootstrapResult> | null = null;
 let listenersInstalled = false;
 let discoveredModelsCache: { models: DiscoveredPuterModel[]; fetchedAt: number } | null = null;
 const MODEL_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -226,6 +249,29 @@ function setConnectionState(connectionState: PuterConnectionState) {
 
 function setRuntimeActivationSource(runtimeActivationSource: RuntimeActivationSource) {
   runtimeState.runtimeActivationSource = runtimeActivationSource;
+}
+
+function markAuthRecoveryRequired(reason: string) {
+  if (runtimeState.authRecoveryState !== 'required') {
+    runtimeState.authBootstrapRequiredAt = now();
+  }
+  runtimeState.authRecoveryState = 'required';
+  runtimeState.authRecoveryError = null;
+  runtimeState.lastRecoveryDecision = reason;
+  setPuterRuntimeMode('mock', reason);
+}
+
+function markAuthRecoveryRecovered() {
+  if (
+    runtimeState.authRecoveryState === 'required' ||
+    runtimeState.authRecoveryState === 'recovering' ||
+    runtimeState.authRecoveryState === 'failed'
+  ) {
+    runtimeState.authRecoveryState = 'recovered';
+    runtimeState.authBootstrapCompletedAt = now();
+    runtimeState.authRecoveryError = null;
+    runtimeState.lastRecoveryDecision = 'auth-recovered';
+  }
 }
 
 export function setPuterRuntimeMode(executionMode: RuntimeExecutionMode, reason: string) {
@@ -489,9 +535,14 @@ export async function validatePuterSession() {
       if (wasUnauthenticated) {
         runtimeState.authRefreshCount += 1;
       }
+      markAuthRecoveryRecovered();
       setRuntimeActivationSource('revalidation');
     }
-    setPuterRuntimeMode(authenticated ? 'live' : 'mock', authenticated ? 'authenticated-session' : 'unauthenticated-session');
+    if (authenticated) {
+      setPuterRuntimeMode('live', 'authenticated-session');
+    } else {
+      markAuthRecoveryRequired('auth-required');
+    }
     if (authenticated) {
       runtimeState.ready = true;
       runtimeState.status = 'ready';
@@ -511,7 +562,7 @@ export async function validatePuterSession() {
     runtimeState.lastRuntimeValidationFailure = error instanceof Error ? error.message : String(error);
     discoveredModelsCache = null;
     runtimeState.discoveredModelCount = 0;
-    setPuterRuntimeMode('mock', 'expired-session');
+    markAuthRecoveryRequired('expired-session');
     setConnectionState('degraded');
     recordRuntimeEvent({
       type: 'runtime_auth_failure',
@@ -601,7 +652,7 @@ export async function validateRuntimeExecution() {
       return {
         available: false,
         mode: runtimeState.executionMode,
-        reason: session.authState === 'expired' ? 'expired-session' : 'unauthenticated-session',
+        reason: session.authState === 'expired' ? 'expired-session' : 'auth-required',
       };
     }
     await validatePuterModels();
@@ -613,6 +664,95 @@ export async function validateRuntimeExecution() {
     setPuterRuntimeMode('offline', reason);
     return { available: false, mode: runtimeState.executionMode, reason };
   }
+}
+
+export async function beginPuterAuthBootstrap(): Promise<AuthBootstrapResult> {
+  if (authBootstrapPromise) return authBootstrapPromise;
+
+  authBootstrapPromise = (async () => {
+    try {
+      const puter = await ensurePuterLoaded();
+      const signIn = puter.auth?.signIn;
+
+      runtimeState.authRecoveryAttempts += 1;
+      runtimeState.authRecoveryState = 'recovering';
+      runtimeState.authBootstrapStartedAt = now();
+      runtimeState.authRecoveryError = null;
+      runtimeState.lastRecoveryDecision = 'auth-bootstrap-started';
+      recordRuntimeEvent({
+        type: 'runtime_recovery',
+        providerId: 'puter',
+        message: 'puter-auth-bootstrap-started',
+      });
+
+      if (!signIn) {
+        const error = 'Puter signIn unavailable';
+        runtimeState.authRecoveryState = 'failed';
+        runtimeState.authRecoveryError = error;
+        runtimeState.lastRuntimeValidationFailure = error;
+        runtimeState.lastRecoveryDecision = 'auth-bootstrap-unavailable';
+        return {
+          ok: false,
+          authState: runtimeState.authState,
+          mode: runtimeState.executionMode,
+          reason: runtimeState.modeReason,
+          error,
+        };
+      }
+
+      await withTimeout(Promise.resolve(signIn()), DEFAULT_OPERATION_TIMEOUT_MS, 'Puter sign-in');
+      const validation = await validateRuntimeExecution();
+      if (!validation.available) {
+        const error = validation.reason || 'auth-bootstrap-validation-failed';
+        runtimeState.authRecoveryState = 'failed';
+        runtimeState.authRecoveryError = error;
+        runtimeState.lastRecoveryDecision = 'auth-bootstrap-failed';
+        return {
+          ok: false,
+          authState: runtimeState.authState,
+          mode: runtimeState.executionMode,
+          reason: runtimeState.modeReason,
+          error,
+        };
+      }
+
+      markAuthRecoveryRecovered();
+      runtimeState.lastRecoveryDecision = 'auth-bootstrap-succeeded';
+      recordRuntimeEvent({
+        type: 'runtime_recovery',
+        providerId: 'puter',
+        message: 'puter-auth-bootstrap-succeeded',
+      });
+      return {
+        ok: true,
+        authState: runtimeState.authState,
+        mode: runtimeState.executionMode,
+        reason: runtimeState.modeReason,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      runtimeState.authRecoveryState = 'failed';
+      runtimeState.authRecoveryError = message;
+      runtimeState.lastRuntimeValidationFailure = message;
+      runtimeState.lastRecoveryDecision = 'auth-bootstrap-failed';
+      recordRuntimeEvent({
+        type: 'runtime_auth_failure',
+        providerId: 'puter',
+        message,
+      });
+      return {
+        ok: false,
+        authState: runtimeState.authState,
+        mode: runtimeState.executionMode,
+        reason: runtimeState.modeReason,
+        error: message,
+      };
+    } finally {
+      authBootstrapPromise = null;
+    }
+  })();
+
+  return authBootstrapPromise;
 }
 
 export async function safePuterChat(messages: Message[], options: SafeChatOptions = {}) {
@@ -1013,8 +1153,15 @@ export function resetPuterRuntimeForTests() {
     deployRefreshRecoveryCount: 0,
     lastOfflineRecoveryAt: null,
     lastDeploymentRefreshAt: null,
+    authRecoveryState: 'idle',
+    authBootstrapRequiredAt: null,
+    authBootstrapStartedAt: null,
+    authBootstrapCompletedAt: null,
+    authRecoveryAttempts: 0,
+    authRecoveryError: null,
   } satisfies PuterRuntimeState);
   discoveredModelsCache = null;
   puterLoadPromise = null;
+  authBootstrapPromise = null;
   clearReconnectTimer();
 }

@@ -68,7 +68,7 @@ export function RightPanel() {
             }`}
           >
             <tab.icon size={14} />
-            <span className="hidden sm:inline">{tab.label}</span>
+            <span className="sr-only">{tab.label}</span>
           </button>
         ))}
       </div>

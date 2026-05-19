@@ -1,8 +1,10 @@
-import { useSyncExternalStore } from 'react';
+import { useState, useSyncExternalStore } from 'react';
 import {
   Activity,
   AlertTriangle,
   Clock,
+  LogIn,
+  RefreshCw,
   ShieldAlert,
   Trash2,
   TrendingUp,
@@ -13,6 +15,7 @@ import { useChatStore } from '@/store/chatStore';
 import { getAllHealth, getCooldownInfo, getHealth } from '@/lib/providers/health';
 import { getAllProviderAnalytics, getProviderAnalytics } from '@/lib/providers/analytics';
 import { getPuterProviderStatus } from '@/lib/providers/puter';
+import { beginPuterAuthBootstrap, validateRuntimeExecution } from '@/lib/providers/puter/runtime';
 import {
   clearClientErrors,
   getClientErrorSnapshot,
@@ -27,6 +30,7 @@ import { modelRegistry } from '@/lib/models/registry';
 import { getLastRoutingDiagnostics } from '@/lib/routing/fallback-router';
 
 export function DiagnosticsTab() {
+  const [authActionStatus, setAuthActionStatus] = useState<'idle' | 'working' | 'done' | 'failed'>('idle');
   const activeConversation = useChatStore((s) =>
     s.conversations.find((c) => c.id === s.activeConversationId)
   );
@@ -59,6 +63,32 @@ export function DiagnosticsTab() {
   const fps = diagnostics?.throughputPerSecond ? Math.min(60, diagnostics.throughputPerSecond) : 0;
   const streamHealth = !streaming ? 'idle' : chunkRate > 0 ? 'streaming' : 'warming';
   const runtimeModeLabel = formatRuntimeMode(puterStatus.runtime.executionMode, puterStatus.runtime.modeReason);
+  const authNeedsAction =
+    puterStatus.runtime.authRecoveryState === 'required' ||
+    puterStatus.runtime.authRecoveryState === 'failed' ||
+    puterStatus.runtime.authState === 'expired' ||
+    puterStatus.runtime.modeReason === 'auth-required';
+  const authRecovering = puterStatus.runtime.authRecoveryState === 'recovering' || authActionStatus === 'working';
+
+  async function handleAuthBootstrap() {
+    setAuthActionStatus('working');
+    try {
+      const result = await beginPuterAuthBootstrap();
+      setAuthActionStatus(result.ok ? 'done' : 'failed');
+    } catch {
+      setAuthActionStatus('failed');
+    }
+  }
+
+  async function handleRuntimeRevalidate() {
+    setAuthActionStatus('working');
+    try {
+      const result = await validateRuntimeExecution();
+      setAuthActionStatus(result.available ? 'done' : 'failed');
+    } catch {
+      setAuthActionStatus('failed');
+    }
+  }
 
   return (
     <div className="space-y-4">
@@ -170,6 +200,40 @@ export function DiagnosticsTab() {
           Puter Runtime
         </h4>
         <div className="space-y-1.5 text-xs">
+          {(authNeedsAction || authRecovering) && (
+            <div className="runtime-auth-banner">
+              <div>
+                <p className="text-xs font-semibold text-text-primary">
+                  {authRecovering ? 'AUTH RECOVERING' : 'AUTH REQUIRED'}
+                </p>
+                <p className="mt-0.5 text-[11px] leading-4 text-text-muted">
+                  {authRecovering
+                    ? 'Puter sign-in is in progress. Runtime will revalidate before returning to live mode.'
+                    : 'Use a signed-in Puter session to restore live provider execution.'}
+                </p>
+              </div>
+              <div className="flex shrink-0 gap-1.5">
+                <button
+                  type="button"
+                  onClick={handleAuthBootstrap}
+                  disabled={authRecovering}
+                  className="runtime-action"
+                >
+                  <LogIn size={12} />
+                  Sign in
+                </button>
+                <button
+                  type="button"
+                  onClick={handleRuntimeRevalidate}
+                  disabled={authRecovering}
+                  className="runtime-action is-subtle"
+                >
+                  <RefreshCw size={12} />
+                  Retry
+                </button>
+              </div>
+            </div>
+          )}
           <div className="flex justify-between">
             <span className="text-text-muted">Status</span>
             <span className={puterStatus.available ? 'text-success' : 'text-warning'}>
@@ -215,6 +279,21 @@ export function DiagnosticsTab() {
             <span className="text-text-secondary">{puterStatus.runtime.authRefreshCount}</span>
           </div>
           <div className="flex justify-between">
+            <span className="text-text-muted">Auth recovery</span>
+            <span className={puterStatus.runtime.authRecoveryState === 'required' ? 'text-warning' : 'text-text-secondary'}>
+              {puterStatus.runtime.authRecoveryState}
+            </span>
+          </div>
+          <div className="grid grid-cols-2 gap-1 text-[10px] text-text-muted">
+            <span>Attempts {puterStatus.runtime.authRecoveryAttempts}</span>
+            <span>Required {formatTimestamp(puterStatus.runtime.authBootstrapRequiredAt)}</span>
+          </div>
+          {puterStatus.runtime.authRecoveryError && (
+            <div className="rounded-md border border-warning/25 bg-warning/10 px-2 py-1 text-[11px] text-warning">
+              {puterStatus.runtime.authRecoveryError}
+            </div>
+          )}
+          <div className="flex justify-between">
             <span className="text-text-muted">Models</span>
             <span className={puterStatus.runtime.modelFetchStatus === 'failed' ? 'text-warning' : 'text-text-secondary'}>
               {puterStatus.runtime.modelFetchStatus} ({puterStatus.runtime.discoveredModelCount})
@@ -238,126 +317,131 @@ export function DiagnosticsTab() {
               {puterStatus.runtime.error}
             </div>
           )}
-          <div className="flex justify-between">
-            <span className="text-text-muted">Timeouts</span>
-            <span className="text-text-secondary">{puterStatus.runtime.timeoutEvents}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-text-muted">Last timeout</span>
-            <span className="text-text-secondary">{formatTimestamp(puterStatus.runtime.lastProviderTimeoutAt)}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-text-muted">Reconnects</span>
-            <span className="text-text-secondary">{puterStatus.runtime.reconnectAttempts}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-text-muted">Next reconnect</span>
-            <span className="text-text-secondary">{formatTimestamp(puterStatus.runtime.nextReconnectAt)}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-text-muted">Backoff</span>
-            <span className="text-text-secondary">{puterStatus.runtime.lastReconnectDelayMs ?? 0}ms</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-text-muted">Reconnect timers</span>
-            <span className={puterStatus.runtime.activeReconnectTimerCount > 0 ? 'text-success' : 'text-text-secondary'}>
-              {puterStatus.runtime.activeReconnectTimerCount}
-            </span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-text-muted">Reconnect exhausted</span>
-            <span className={puterStatus.runtime.reconnectExhausted ? 'text-warning' : 'text-text-secondary'}>
-              {puterStatus.runtime.reconnectExhausted ? 'yes' : 'no'}
-            </span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-text-muted">Exhaustions</span>
-            <span className={puterStatus.runtime.reconnectExhaustionCount > 0 ? 'text-warning' : 'text-text-secondary'}>
-              {puterStatus.runtime.reconnectExhaustionCount}
-            </span>
-          </div>
-          <div className="grid grid-cols-2 gap-1 text-[10px] text-text-muted">
-            <span>Offline recoveries {puterStatus.runtime.offlineRecoveryCount}</span>
-            <span>Deploy refreshes {puterStatus.runtime.deployRefreshRecoveryCount}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-text-muted">WS failures</span>
-            <span className="text-text-secondary">{puterStatus.runtime.websocketFailures}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-text-muted">Fallbacks</span>
-            <span className="text-text-secondary">{puterStatus.runtime.fallbackEvents}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-text-muted">Active requests</span>
-            <span className={puterStatus.runtime.activeRequestCount > 0 ? 'text-success' : 'text-text-secondary'}>
-              {puterStatus.runtime.activeRequestCount}
-            </span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-text-muted">Active streams</span>
-            <span className={puterStatus.runtime.activeStreamCount > 0 ? 'text-success' : 'text-text-secondary'}>
-              {puterStatus.runtime.activeStreamCount}
-            </span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-text-muted">Stream aborts</span>
-            <span className={puterStatus.runtime.streamAbortEvents > 0 ? 'text-warning' : 'text-text-secondary'}>
-              {puterStatus.runtime.streamAbortEvents}
-            </span>
-          </div>
-          {puterStatus.runtime.lastStreamAbortReason && (
-            <div className="flex justify-between gap-3">
-              <span className="text-text-muted">Abort cause</span>
-              <span className="max-w-[150px] truncate text-right text-text-secondary">
-                {puterStatus.runtime.lastStreamAbortReason}
-              </span>
+          <details className="diagnostics-disclosure">
+            <summary>Operational counters</summary>
+            <div className="space-y-1.5 pt-2">
+              <div className="flex justify-between">
+                <span className="text-text-muted">Timeouts</span>
+                <span className="text-text-secondary">{puterStatus.runtime.timeoutEvents}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-text-muted">Last timeout</span>
+                <span className="text-text-secondary">{formatTimestamp(puterStatus.runtime.lastProviderTimeoutAt)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-text-muted">Reconnects</span>
+                <span className="text-text-secondary">{puterStatus.runtime.reconnectAttempts}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-text-muted">Next reconnect</span>
+                <span className="text-text-secondary">{formatTimestamp(puterStatus.runtime.nextReconnectAt)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-text-muted">Backoff</span>
+                <span className="text-text-secondary">{puterStatus.runtime.lastReconnectDelayMs ?? 0}ms</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-text-muted">Reconnect timers</span>
+                <span className={puterStatus.runtime.activeReconnectTimerCount > 0 ? 'text-success' : 'text-text-secondary'}>
+                  {puterStatus.runtime.activeReconnectTimerCount}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-text-muted">Reconnect exhausted</span>
+                <span className={puterStatus.runtime.reconnectExhausted ? 'text-warning' : 'text-text-secondary'}>
+                  {puterStatus.runtime.reconnectExhausted ? 'yes' : 'no'}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-text-muted">Exhaustions</span>
+                <span className={puterStatus.runtime.reconnectExhaustionCount > 0 ? 'text-warning' : 'text-text-secondary'}>
+                  {puterStatus.runtime.reconnectExhaustionCount}
+                </span>
+              </div>
+              <div className="grid grid-cols-2 gap-1 text-[10px] text-text-muted">
+                <span>Offline recoveries {puterStatus.runtime.offlineRecoveryCount}</span>
+                <span>Deploy refreshes {puterStatus.runtime.deployRefreshRecoveryCount}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-text-muted">WS failures</span>
+                <span className="text-text-secondary">{puterStatus.runtime.websocketFailures}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-text-muted">Fallbacks</span>
+                <span className="text-text-secondary">{puterStatus.runtime.fallbackEvents}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-text-muted">Active requests</span>
+                <span className={puterStatus.runtime.activeRequestCount > 0 ? 'text-success' : 'text-text-secondary'}>
+                  {puterStatus.runtime.activeRequestCount}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-text-muted">Active streams</span>
+                <span className={puterStatus.runtime.activeStreamCount > 0 ? 'text-success' : 'text-text-secondary'}>
+                  {puterStatus.runtime.activeStreamCount}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-text-muted">Stream aborts</span>
+                <span className={puterStatus.runtime.streamAbortEvents > 0 ? 'text-warning' : 'text-text-secondary'}>
+                  {puterStatus.runtime.streamAbortEvents}
+                </span>
+              </div>
+              {puterStatus.runtime.lastStreamAbortReason && (
+                <div className="flex justify-between gap-3">
+                  <span className="text-text-muted">Abort cause</span>
+                  <span className="max-w-[150px] truncate text-right text-text-secondary">
+                    {puterStatus.runtime.lastStreamAbortReason}
+                  </span>
+                </div>
+              )}
+              <div className="flex justify-between">
+                <span className="text-text-muted">Retry blocks</span>
+                <span className={puterStatus.runtime.duplicateRetryBlocks > 0 ? 'text-warning' : 'text-text-secondary'}>
+                  {puterStatus.runtime.duplicateRetryBlocks}
+                </span>
+              </div>
+              <div className="flex justify-between gap-3">
+                <span className="text-text-muted">Recovery</span>
+                <span className="max-w-[150px] truncate text-right text-text-secondary">
+                  {puterStatus.runtime.lastRecoveryDecision ?? 'none'}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-text-muted">Recoveries</span>
+                <span className="text-text-secondary">{puterStatus.runtime.providerRecoverySuccessCount}</span>
+              </div>
+              {puterStatus.runtime.lastRuntimeValidationFailure && (
+                <div className="rounded-md border border-warning/25 bg-warning/10 px-2 py-1 text-[11px] text-warning">
+                  {puterStatus.runtime.lastRuntimeValidationFailure}
+                </div>
+              )}
+              <div className="flex justify-between">
+                <span className="text-text-muted">Latency</span>
+                <span className="text-text-secondary">
+                  {puterStatus.runtime.providerLatencyMs ?? 0}ms
+                </span>
+              </div>
+              <div className="grid grid-cols-3 gap-1 pt-1 text-[10px] text-text-muted">
+                <span>Image {puterStatus.runtime.lastImageLatencyMs ?? 0}ms</span>
+                <span>TTS {puterStatus.runtime.lastTTSLatencyMs ?? 0}ms</span>
+                <span>STT {puterStatus.runtime.lastSTTLatencyMs ?? 0}ms</span>
+              </div>
+              <div className="grid grid-cols-2 gap-1 text-[10px] text-text-muted">
+                <span>Images {puterStatus.runtime.imageGenerationCount}/{puterStatus.runtime.imageFailureCount} failed</span>
+                <span>Voice {puterStatus.runtime.voiceRequestCount}/{puterStatus.runtime.voiceFailureCount} failed</span>
+              </div>
+              <div className="grid grid-cols-2 gap-1 text-[10px] text-text-muted">
+                <span>Validations {puterStatus.runtime.runtimeValidationCount}</span>
+                <span>Long stream {formatMs(puterStatus.runtime.maxObservedStreamDurationMs)}</span>
+              </div>
+              <div className="grid grid-cols-2 gap-1 text-[10px] text-text-muted">
+                <span>Object URLs {resourceSnapshot.activeObjectUrlCount}</span>
+                <span>Media tracks {resourceSnapshot.activeMediaTrackCount}</span>
+              </div>
             </div>
-          )}
-          <div className="flex justify-between">
-            <span className="text-text-muted">Retry blocks</span>
-            <span className={puterStatus.runtime.duplicateRetryBlocks > 0 ? 'text-warning' : 'text-text-secondary'}>
-              {puterStatus.runtime.duplicateRetryBlocks}
-            </span>
-          </div>
-          <div className="flex justify-between gap-3">
-            <span className="text-text-muted">Recovery</span>
-            <span className="max-w-[150px] truncate text-right text-text-secondary">
-              {puterStatus.runtime.lastRecoveryDecision ?? 'none'}
-            </span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-text-muted">Recoveries</span>
-            <span className="text-text-secondary">{puterStatus.runtime.providerRecoverySuccessCount}</span>
-          </div>
-          {puterStatus.runtime.lastRuntimeValidationFailure && (
-            <div className="rounded-md border border-warning/25 bg-warning/10 px-2 py-1 text-[11px] text-warning">
-              {puterStatus.runtime.lastRuntimeValidationFailure}
-            </div>
-          )}
-          <div className="flex justify-between">
-            <span className="text-text-muted">Latency</span>
-            <span className="text-text-secondary">
-              {puterStatus.runtime.providerLatencyMs ?? 0}ms
-            </span>
-          </div>
-          <div className="grid grid-cols-3 gap-1 pt-1 text-[10px] text-text-muted">
-            <span>Image {puterStatus.runtime.lastImageLatencyMs ?? 0}ms</span>
-            <span>TTS {puterStatus.runtime.lastTTSLatencyMs ?? 0}ms</span>
-            <span>STT {puterStatus.runtime.lastSTTLatencyMs ?? 0}ms</span>
-          </div>
-          <div className="grid grid-cols-2 gap-1 text-[10px] text-text-muted">
-            <span>Images {puterStatus.runtime.imageGenerationCount}/{puterStatus.runtime.imageFailureCount} failed</span>
-            <span>Voice {puterStatus.runtime.voiceRequestCount}/{puterStatus.runtime.voiceFailureCount} failed</span>
-          </div>
-          <div className="grid grid-cols-2 gap-1 text-[10px] text-text-muted">
-            <span>Validations {puterStatus.runtime.runtimeValidationCount}</span>
-            <span>Long stream {formatMs(puterStatus.runtime.maxObservedStreamDurationMs)}</span>
-          </div>
-          <div className="grid grid-cols-2 gap-1 text-[10px] text-text-muted">
-            <span>Object URLs {resourceSnapshot.activeObjectUrlCount}</span>
-            <span>Media tracks {resourceSnapshot.activeMediaTrackCount}</span>
-          </div>
+          </details>
         </div>
       </div>
 
@@ -710,6 +794,8 @@ export function DiagnosticsTab() {
 function formatRuntimeMode(mode: string, reason?: string | null) {
   const base = mode.toUpperCase();
   if (!reason) return base;
+  if (reason === 'auth-required') return `${base} (Auth required)`;
+  if (reason === 'expired-session') return `${base} (Expired session)`;
   if (reason === 'unauthenticated-session') return `${base} (Unauthenticated)`;
   if (reason.includes('timeout')) return `${base} (Provider timeout)`;
   if (reason === 'developer override') return `${base} (Developer override)`;

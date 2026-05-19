@@ -199,6 +199,12 @@ a {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.018), rgba(255, 255, 255, 0));
 }
 
+.panel-tabs {
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
 .sidebar-item,
 .control-surface,
 .icon-action,
@@ -384,6 +390,8 @@ a {
 
 .panel-tab {
   border-bottom: 1px solid transparent;
+  min-width: 3rem;
+  white-space: nowrap;
 }
 
 .panel-tab:hover {
@@ -1110,6 +1118,63 @@ select:focus-visible {
   gap: 0.5rem;
 }
 
+.runtime-auth-banner {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.75rem;
+  border: 1px solid rgba(236, 201, 75, 0.22);
+  border-radius: var(--radius-control);
+  background:
+    linear-gradient(180deg, rgba(75, 58, 22, 0.36), rgba(33, 24, 16, 0.42));
+  padding: 0.75rem;
+}
+
+.runtime-action {
+  display: inline-flex;
+  min-height: 1.9rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  border: 1px solid rgba(174, 142, 232, 0.24);
+  border-radius: var(--radius-control);
+  background: rgba(127, 91, 197, 0.22);
+  color: var(--color-text-primary);
+  font-size: 0.72rem;
+  font-weight: 650;
+  padding: 0 0.55rem;
+}
+
+.runtime-action:hover:not(:disabled) {
+  border-color: rgba(174, 142, 232, 0.42);
+  background: rgba(127, 91, 197, 0.34);
+}
+
+.runtime-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.runtime-action.is-subtle {
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--color-text-secondary);
+}
+
+.diagnostics-disclosure {
+  border-top: 1px solid rgba(174, 142, 232, 0.1);
+  margin-top: 0.25rem;
+  padding-top: 0.45rem;
+}
+
+.diagnostics-disclosure > summary {
+  cursor: pointer;
+  color: var(--color-text-muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+  list-style-position: inside;
+  text-transform: uppercase;
+}
+
 .metric-badge {
   border: 1px solid rgba(174, 142, 232, 0.11);
   border-radius: var(--radius-control);
@@ -1483,6 +1548,14 @@ select:focus-visible {
 
   .diagnostic-summary {
     grid-template-columns: 1fr;
+  }
+
+  .runtime-auth-banner {
+    grid-template-columns: 1fr;
+  }
+
+  .runtime-action {
+    flex: 1;
   }
 
   .group .absolute.top-2.right-2 {

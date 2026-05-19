@@ -21,6 +21,7 @@ import { getPuterProviderStatus } from "@/lib/providers/puter";
 import { puterStream } from "@/lib/providers/puter/chat";
 import {
   getPuterDiscoveredModels,
+  beginPuterAuthBootstrap,
   recordPuterStreamAbort,
   recordPuterFallbackEvent,
   resetPuterConnectionStateForRetry,
@@ -555,13 +556,14 @@ describe("provider routing and diagnostics state", () => {
     await expect(validateRuntimeExecution()).resolves.toMatchObject({
       available: false,
       mode: "mock",
-      reason: "unauthenticated-session",
+      reason: "auth-required",
     });
-    await expect(safePuterChat(messages, { model: "claude-sonnet-4" })).rejects.toThrow(/unauthenticated/i);
+    await expect(safePuterChat(messages, { model: "claude-sonnet-4" })).rejects.toThrow(/auth-required/i);
     expect(getPuterProviderStatus().runtime).toMatchObject({
       executionMode: "mock",
-      modeReason: "unauthenticated-session",
+      modeReason: "auth-required",
       authState: "unauthenticated",
+      authRecoveryState: "required",
     });
   });
 
@@ -811,6 +813,105 @@ describe("provider routing and diagnostics state", () => {
       deployRefreshRecoveryCount: 1,
       activeReconnectTimerCount: 0,
       activeStreamCount: 0,
+    });
+  });
+
+  it("marks unauthenticated runtime as recoverable auth-required without silent mock dead-end", async () => {
+    window.puter = {
+      ai: {
+        listModels: vi.fn().mockResolvedValue([{ id: "gpt-4o", provider: "openai" }]),
+      },
+      auth: {
+        isSignedIn: () => Promise.resolve(false),
+        getUser: () => Promise.resolve(null),
+      },
+    };
+
+    await validateRuntimeExecution();
+
+    expect(getPuterProviderStatus().runtime).toMatchObject({
+      executionMode: "mock",
+      modeReason: "auth-required",
+      authRecoveryState: "required",
+      authBootstrapRequiredAt: Date.now(),
+      authRecoveryAttempts: 0,
+    });
+  });
+
+  it("runs user-triggered Puter auth bootstrap once and revalidates live models", async () => {
+    const signIn = vi.fn().mockImplementation(() => {
+      window.puter!.auth = {
+        signIn,
+        isSignedIn: () => Promise.resolve(true),
+        getUser: () => Promise.resolve({ username: "popup-user" }),
+      };
+      return Promise.resolve({ username: "popup-user" });
+    });
+    const listModels = vi.fn().mockResolvedValue([{ id: "claude-sonnet-4", provider: "anthropic" }]);
+    window.puter = {
+      ai: { listModels },
+      auth: {
+        signIn,
+        isSignedIn: () => Promise.resolve(false),
+        getUser: () => Promise.resolve(null),
+      },
+    };
+
+    await validateRuntimeExecution();
+    await expect(beginPuterAuthBootstrap()).resolves.toMatchObject({
+      ok: true,
+      authState: "authenticated",
+    });
+
+    expect(signIn).toHaveBeenCalledTimes(1);
+    expect(listModels).toHaveBeenCalledTimes(1);
+    expect(getPuterProviderStatus().runtime).toMatchObject({
+      executionMode: "live",
+      modeReason: "authenticated-session",
+      authRecoveryState: "recovered",
+      authRecoveryAttempts: 1,
+      discoveredModelCount: 1,
+    });
+  });
+
+  it("suppresses duplicate auth bootstrap calls while the Puter popup flow is pending", async () => {
+    let resolveSignIn: (value: unknown) => void = () => undefined;
+    const signIn = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          resolveSignIn = resolve;
+        })
+    );
+    window.puter = {
+      ai: {
+        listModels: vi.fn().mockResolvedValue([{ id: "gpt-4o", provider: "openai" }]),
+      },
+      auth: {
+        signIn,
+        isSignedIn: () => Promise.resolve(false),
+        getUser: () => Promise.resolve(null),
+      },
+    };
+
+    await validateRuntimeExecution();
+    const first = beginPuterAuthBootstrap();
+    const second = beginPuterAuthBootstrap();
+    await Promise.resolve();
+    expect(signIn).toHaveBeenCalledTimes(1);
+
+    window.puter.auth = {
+      signIn,
+      isSignedIn: () => Promise.resolve(true),
+      getUser: () => Promise.resolve({ username: "popup-user" }),
+    };
+    resolveSignIn({ username: "popup-user" });
+
+    await expect(first).resolves.toMatchObject({ ok: true });
+    await expect(second).resolves.toMatchObject({ ok: true });
+    expect(getPuterProviderStatus().runtime).toMatchObject({
+      authRecoveryAttempts: 1,
+      authRecoveryState: "recovered",
+      executionMode: "live",
     });
   });
 

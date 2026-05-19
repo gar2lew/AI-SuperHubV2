@@ -23,6 +23,8 @@ This phase does not introduce agents, orchestration, backend services, databases
 - Runtime mode is explicit: `live`, `mock`, `fallback`, or `offline`.
 - Mock and fallback activation paths are observable in diagnostics.
 - Puter model discovery is exercised through `puter.ai.listModels()` in runtime tests.
+- External deployments now expose an explicit `AUTH REQUIRED` recovery state instead of silently settling into mock mode after unauthenticated validation.
+- User-triggered Puter auth bootstrap calls `puter.auth.signIn()` once per pending popup flow, then revalidates auth and model discovery before returning to live mode.
 - Reconnect scheduling uses bounded jittered backoff and suppresses duplicate reconnect timers.
 - Retry recovery requests are rate limited to prevent duplicate retry storms.
 - Auth expiration invalidates live readiness and clears cached model discovery.
@@ -72,6 +74,7 @@ The following validations are still blocked in this automation environment becau
 - Unauthenticated or expired sessions transition to explicit `mock`.
 - Provider/model discovery failures transition to `fallback`.
 - Auth expiration clears discovered model cache so stale model availability cannot poison future routing.
+- Auth recovery attempts, required timestamps, recovery errors, and recovered state are visible in diagnostics.
 - Reconnect attempts are bounded and jittered to avoid synchronized retry loops.
 - Duplicate retry recovery requests are suppressed during a short runtime cooldown.
 - Diagnostics now shows runtime mode, mode reason, auth invalidation, model fetch status, reconnect backoff, retry blocks, active request/stream counts, stream abort causes, recovery decisions, image/TTS/STT latency, media failure counts, and provider latency.
@@ -84,6 +87,7 @@ The following validations are still blocked in this automation environment becau
 - Offline/online transitions increment bounded recovery counters and schedule at most one reconnect attempt.
 - A successful auth revalidation after unauthenticated or expired state increments auth refresh count and clears stale degraded state.
 - Deployment refresh recovery is idempotent and local-only; it does not add backend coordination or persistent orchestration.
+- Runtime diagnostics now keeps primary readiness visible first, with deeper operational counters progressively disclosed to reduce panel clutter.
 
 ## Deployment Observations
 
@@ -130,6 +134,7 @@ Release-candidate acceptance criteria:
 
 - The app can be considered ready for controlled Puter-hosted release testing when automated validation remains green and Diagnostics shows deterministic mode transitions under both authenticated and unauthenticated sessions.
 - The app should not be considered fully production-accepted until the live checklist below is completed in an authenticated Puter-hosted browser session and at least one real mobile device.
+- External/Vercel deployments should now show a recoverable auth-required state with a user-action Sign in control when Puter auth is unavailable or expired.
 
 ## Release Candidate Operational Review
 
