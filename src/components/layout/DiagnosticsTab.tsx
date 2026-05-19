@@ -250,6 +250,21 @@ export function DiagnosticsTab() {
             <span className="text-text-muted">Activation</span>
             <span className="text-text-secondary">{puterStatus.runtime.runtimeActivationSource}</span>
           </div>
+          <div className="flex justify-between">
+            <span className="text-text-muted">SDK</span>
+            <span className={puterStatus.runtime.sdkLoadState === 'failed' ? 'text-warning' : 'text-text-secondary'}>
+              {puterStatus.runtime.sdkLoadState}
+            </span>
+          </div>
+          <div className="grid grid-cols-2 gap-1 text-[10px] text-text-muted">
+            <span>SDK retries {puterStatus.runtime.sdkRetryCount}</span>
+            <span>{puterStatus.runtime.sdkAlreadyPresent ? 'Already present' : 'Injected'}</span>
+          </div>
+          {puterStatus.runtime.sdkLoadError && (
+            <div className="rounded-md border border-warning/25 bg-warning/10 px-2 py-1 text-[11px] text-warning">
+              {puterStatus.runtime.sdkLoadError}
+            </div>
+          )}
           {puterStatus.runtime.modeReason && (
             <div className="flex justify-between gap-3">
               <span className="text-text-muted">Mode reason</span>

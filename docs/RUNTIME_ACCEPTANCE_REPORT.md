@@ -25,6 +25,8 @@ This phase does not introduce agents, orchestration, backend services, databases
 - Puter model discovery is exercised through `puter.ai.listModels()` in runtime tests.
 - External deployments now expose an explicit `AUTH REQUIRED` recovery state instead of silently settling into mock mode after unauthenticated validation.
 - User-triggered Puter auth bootstrap calls `puter.auth.signIn()` once per pending popup flow, then revalidates auth and model discovery before returning to live mode.
+- App startup now begins deterministic Puter SDK bootstrap before auth validation, so external deployments can move from `OFFLINE` to `AUTH REQUIRED` or `LIVE` once `window.puter` is available.
+- SDK load state, load timing, load errors, already-present detection, and retry count are visible in diagnostics.
 - Reconnect scheduling uses bounded jittered backoff and suppresses duplicate reconnect timers.
 - Retry recovery requests are rate limited to prevent duplicate retry storms.
 - Auth expiration invalidates live readiness and clears cached model discovery.

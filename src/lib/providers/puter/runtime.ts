@@ -14,6 +14,7 @@ const MAX_RECONNECT_DELAY_MS = 5000;
 
 type RuntimeStatus = 'idle' | 'loading' | 'ready' | 'cooldown' | 'error';
 export type RuntimeExecutionMode = 'live' | 'mock' | 'fallback' | 'offline';
+export type PuterSdkLoadState = 'idle' | 'loading' | 'loaded' | 'present' | 'failed';
 export type RuntimeActivationSource =
   | 'unknown'
   | 'existing-window'
@@ -137,6 +138,12 @@ export interface PuterRuntimeState {
   authBootstrapCompletedAt: number | null;
   authRecoveryAttempts: number;
   authRecoveryError: string | null;
+  sdkLoadState: PuterSdkLoadState;
+  sdkLoadStartedAt: number | null;
+  sdkLoadedAt: number | null;
+  sdkLoadError: string | null;
+  sdkAlreadyPresent: boolean;
+  sdkRetryCount: number;
 }
 
 export interface SafeChatOptions {
@@ -223,9 +230,16 @@ const runtimeState: PuterRuntimeState = {
   authBootstrapCompletedAt: null,
   authRecoveryAttempts: 0,
   authRecoveryError: null,
+  sdkLoadState: 'idle',
+  sdkLoadStartedAt: null,
+  sdkLoadedAt: null,
+  sdkLoadError: null,
+  sdkAlreadyPresent: false,
+  sdkRetryCount: 0,
 };
 
 let puterLoadPromise: Promise<void> | null = null;
+let runtimeBootstrapPromise: Promise<{ available: boolean; mode: RuntimeExecutionMode; reason: string | null }> | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let authBootstrapPromise: Promise<AuthBootstrapResult> | null = null;
 let listenersInstalled = false;
@@ -249,6 +263,28 @@ function setConnectionState(connectionState: PuterConnectionState) {
 
 function setRuntimeActivationSource(runtimeActivationSource: RuntimeActivationSource) {
   runtimeState.runtimeActivationSource = runtimeActivationSource;
+}
+
+function markSdkLoadStarted(alreadyPresent: boolean) {
+  runtimeState.sdkLoadState = alreadyPresent ? 'present' : 'loading';
+  runtimeState.sdkLoadStartedAt = now();
+  runtimeState.sdkLoadError = null;
+  runtimeState.sdkAlreadyPresent = alreadyPresent;
+  if (!alreadyPresent) {
+    runtimeState.sdkRetryCount += 1;
+  }
+}
+
+function markSdkLoaded(alreadyPresent: boolean) {
+  runtimeState.sdkLoadState = alreadyPresent ? 'present' : 'loaded';
+  runtimeState.sdkLoadedAt = now();
+  runtimeState.sdkLoadError = null;
+  runtimeState.sdkAlreadyPresent = alreadyPresent;
+}
+
+function markSdkLoadFailed(error: unknown) {
+  runtimeState.sdkLoadState = 'failed';
+  runtimeState.sdkLoadError = error instanceof Error ? error.message : String(error);
 }
 
 function markAuthRecoveryRequired(reason: string) {
@@ -435,12 +471,14 @@ export async function ensurePuterLoaded(timeoutMs = DEFAULT_LOAD_TIMEOUT_MS) {
   if (window.puter) {
     runtimeState.loaded = true;
     runtimeState.initializedAt ||= now();
+    markSdkLoaded(runtimeState.sdkLoadState !== 'loading' && runtimeState.sdkLoadState !== 'loaded');
     setRuntimeActivationSource('existing-window');
     markRuntimeLoadedReady();
     return window.puter;
   }
 
   if (!puterLoadPromise) {
+    markSdkLoadStarted(false);
     runtimeState.loading = true;
     runtimeState.status = 'loading';
     setConnectionState(runtimeState.loaded ? 'reconnecting' : 'connecting');
@@ -453,6 +491,7 @@ export async function ensurePuterLoaded(timeoutMs = DEFAULT_LOAD_TIMEOUT_MS) {
 
     runtimeState.loaded = true;
     runtimeState.initializedAt = now();
+    markSdkLoaded(false);
     setRuntimeActivationSource('script-load');
     markRuntimeLoadedReady();
     return window.puter;
@@ -466,7 +505,9 @@ export async function ensurePuterLoaded(timeoutMs = DEFAULT_LOAD_TIMEOUT_MS) {
         phase: 'load',
       },
     });
+    markSdkLoadFailed(error);
     markFailure(error);
+    setPuterRuntimeMode('offline', runtimeState.sdkLoadError || 'sdk-load-failed');
     throw error;
   }
 }
@@ -664,6 +705,29 @@ export async function validateRuntimeExecution() {
     setPuterRuntimeMode('offline', reason);
     return { available: false, mode: runtimeState.executionMode, reason };
   }
+}
+
+export function beginPuterRuntimeBootstrap() {
+  if (runtimeBootstrapPromise) return runtimeBootstrapPromise;
+
+  runtimeBootstrapPromise = (async () => {
+    try {
+      await ensurePuterLoaded();
+      return await validateRuntimeExecution();
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      setPuterRuntimeMode('offline', reason);
+      return {
+        available: false,
+        mode: runtimeState.executionMode,
+        reason,
+      };
+    } finally {
+      runtimeBootstrapPromise = null;
+    }
+  })();
+
+  return runtimeBootstrapPromise;
 }
 
 export async function beginPuterAuthBootstrap(): Promise<AuthBootstrapResult> {
@@ -1159,9 +1223,19 @@ export function resetPuterRuntimeForTests() {
     authBootstrapCompletedAt: null,
     authRecoveryAttempts: 0,
     authRecoveryError: null,
+    sdkLoadState: 'idle',
+    sdkLoadStartedAt: null,
+    sdkLoadedAt: null,
+    sdkLoadError: null,
+    sdkAlreadyPresent: false,
+    sdkRetryCount: 0,
   } satisfies PuterRuntimeState);
   discoveredModelsCache = null;
   puterLoadPromise = null;
+  runtimeBootstrapPromise = null;
   authBootstrapPromise = null;
+  if (typeof document !== 'undefined') {
+    document.querySelectorAll(`script[src="${PUTER_SCRIPT_SRC}"]`).forEach((script) => script.remove());
+  }
   clearReconnectTimer();
 }

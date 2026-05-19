@@ -3,6 +3,7 @@ import { MainLayout } from '@/components/layout/MainLayout';
 import { useChatStore } from '@/store/chatStore';
 import { useSettingsStore } from '@/store/settingsStore';
 import { recordHydrationComplete } from '@/lib/telemetry/runtimeTelemetry';
+import { beginPuterRuntimeBootstrap } from '@/lib/providers/puter/runtime';
 
 function KeyboardShortcuts() {
   const toggleSidebar = useSettingsStore((s) => s.toggleSidebar);
@@ -79,6 +80,7 @@ function KeyboardShortcuts() {
 function App() {
   useEffect(() => {
     recordHydrationComplete();
+    void beginPuterRuntimeBootstrap();
   }, []);
 
   return (

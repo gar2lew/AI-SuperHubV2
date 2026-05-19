@@ -22,6 +22,7 @@ import { puterStream } from "@/lib/providers/puter/chat";
 import {
   getPuterDiscoveredModels,
   beginPuterAuthBootstrap,
+  beginPuterRuntimeBootstrap,
   recordPuterStreamAbort,
   recordPuterFallbackEvent,
   resetPuterConnectionStateForRetry,
@@ -375,6 +376,47 @@ describe("provider routing and diagnostics state", () => {
       ready: false,
       timeoutEvents: 0,
       activeStreamId: null,
+    });
+  });
+
+  it("bootstraps the Puter SDK once, then validates auth and model state", async () => {
+    const bootstrap = beginPuterRuntimeBootstrap();
+    const duplicate = beginPuterRuntimeBootstrap();
+    const scripts = document.querySelectorAll('script[src="https://js.puter.com/v2/"]');
+
+    expect(scripts).toHaveLength(1);
+    expect(getPuterProviderStatus().runtime).toMatchObject({
+      sdkLoadState: "loading",
+      sdkRetryCount: 1,
+      sdkAlreadyPresent: false,
+    });
+
+    window.puter = {
+      ai: {
+        listModels: vi.fn().mockResolvedValue([{ id: "gpt-4o", provider: "openai" }]),
+      },
+      auth: {
+        isSignedIn: () => Promise.resolve(false),
+        getUser: () => Promise.resolve(null),
+      },
+    };
+    scripts[0].dispatchEvent(new Event("load"));
+
+    await expect(bootstrap).resolves.toMatchObject({
+      available: false,
+      mode: "mock",
+      reason: "auth-required",
+    });
+    await expect(duplicate).resolves.toMatchObject({
+      available: false,
+      mode: "mock",
+      reason: "auth-required",
+    });
+    expect(getPuterProviderStatus().runtime).toMatchObject({
+      sdkLoadState: "loaded",
+      sdkLoadedAt: Date.now(),
+      authRecoveryState: "required",
+      modeReason: "auth-required",
     });
   });
 
