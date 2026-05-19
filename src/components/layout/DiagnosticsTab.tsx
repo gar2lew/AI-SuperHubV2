@@ -15,7 +15,7 @@ import { useChatStore } from '@/store/chatStore';
 import { getAllHealth, getCooldownInfo, getHealth } from '@/lib/providers/health';
 import { getAllProviderAnalytics, getProviderAnalytics } from '@/lib/providers/analytics';
 import { getPuterProviderStatus } from '@/lib/providers/puter';
-import { beginPuterAuthBootstrap, validateRuntimeExecution } from '@/lib/providers/puter/runtime';
+import { beginPuterAuthPopupFromUserGesture, validateRuntimeExecution } from '@/lib/providers/puter/runtime';
 import {
   clearClientErrors,
   getClientErrorSnapshot,
@@ -71,17 +71,17 @@ export function DiagnosticsTab() {
     puterStatus.runtime.modeReason === 'auth-required';
   const authRecovering = puterStatus.runtime.authRecoveryState === 'recovering' || authActionStatus === 'working';
 
-  async function handleAuthBootstrap() {
+  function handleAuthBootstrap() {
+    const resultPromise = beginPuterAuthPopupFromUserGesture();
     setAuthActionStatus('working');
-    try {
-      const result = await beginPuterAuthBootstrap();
+    void resultPromise.then((result) => {
       setAuthActionStatus(result.ok ? 'done' : 'failed');
       if (result.ok) {
         window.dispatchEvent(new CustomEvent('ai-superhub:auth-replay-ready'));
       }
-    } catch {
+    }).catch(() => {
       setAuthActionStatus('failed');
-    }
+    });
   }
 
   async function handleRuntimeRevalidate() {
@@ -315,6 +315,22 @@ export function DiagnosticsTab() {
           {puterStatus.runtime.authRecoveryError && (
             <div className="rounded-md border border-warning/25 bg-warning/10 px-2 py-1 text-[11px] text-warning">
               {puterStatus.runtime.authRecoveryError}
+            </div>
+          )}
+          <div className="flex justify-between">
+            <span className="text-text-muted">Popup</span>
+            <span className={puterStatus.runtime.authPopupState === 'blocked' ? 'text-warning' : 'text-text-secondary'}>
+              {puterStatus.runtime.authPopupState}
+            </span>
+          </div>
+          {puterStatus.runtime.authPopupState === 'blocked' && (
+            <div className="rounded-md border border-warning/25 bg-warning/10 px-2 py-1 text-[11px] text-warning">
+              Popup blocked. Allow popups for this site, then press Sign in again.
+            </div>
+          )}
+          {puterStatus.runtime.authPopupError && (
+            <div className="rounded-md border border-warning/25 bg-warning/10 px-2 py-1 text-[11px] text-warning">
+              {puterStatus.runtime.authPopupError}
             </div>
           )}
           <div className="flex justify-between">

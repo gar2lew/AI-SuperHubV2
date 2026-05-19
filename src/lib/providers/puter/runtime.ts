@@ -32,6 +32,14 @@ export type PuterConnectionState =
 export type PuterAuthState = 'unknown' | 'authenticated' | 'unauthenticated' | 'expired';
 export type PuterAuthRecoveryState = 'idle' | 'required' | 'recovering' | 'recovered' | 'failed';
 export type PuterAuthReplayState = 'idle' | 'pending' | 'replaying' | 'succeeded' | 'failed';
+export type PuterAuthPopupState =
+  | 'idle'
+  | 'opened'
+  | 'blocked'
+  | 'closed'
+  | 'completed'
+  | 'cancelled'
+  | 'failed';
 
 interface PuterAI {
   chat?: (messages: ReturnType<typeof formatMessages>, options: SafeChatOptions & { system?: string }) => unknown;
@@ -152,6 +160,12 @@ export interface PuterRuntimeState {
   lastAuthReplaySuccessAt: number | null;
   lastAuthReplayFailureAt: number | null;
   authReplayError: string | null;
+  authPopupState: PuterAuthPopupState;
+  authPopupOpenedAt: number | null;
+  authPopupClosedAt: number | null;
+  authPopupBlockedAt: number | null;
+  authPopupCompletedAt: number | null;
+  authPopupError: string | null;
 }
 
 export interface SafeChatOptions {
@@ -251,6 +265,12 @@ const runtimeState: PuterRuntimeState = {
   lastAuthReplaySuccessAt: null,
   lastAuthReplayFailureAt: null,
   authReplayError: null,
+  authPopupState: 'idle',
+  authPopupOpenedAt: null,
+  authPopupClosedAt: null,
+  authPopupBlockedAt: null,
+  authPopupCompletedAt: null,
+  authPopupError: null,
 };
 
 let puterLoadPromise: Promise<void> | null = null;
@@ -375,6 +395,37 @@ function markAuthRecoveryRecovered() {
     runtimeState.authRecoveryError = null;
     runtimeState.lastRecoveryDecision = 'auth-recovered';
   }
+}
+
+function classifyAuthPopupFailure(error: unknown): PuterAuthPopupState {
+  const message = error instanceof Error ? error.message : String(error || '');
+  if (/popup|window\.open|null|blocked/i.test(message)) return 'blocked';
+  if (/cancel|close|dismiss/i.test(message)) return 'cancelled';
+  return 'failed';
+}
+
+function markAuthPopupFailure(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  const popupState = classifyAuthPopupFailure(error);
+  runtimeState.authPopupState = popupState;
+  runtimeState.authPopupError = message;
+  if (popupState === 'blocked') {
+    runtimeState.authPopupBlockedAt = now();
+    runtimeState.lastRecoveryDecision = 'auth-popup-blocked';
+  } else if (popupState === 'cancelled') {
+    runtimeState.authPopupClosedAt = now();
+    runtimeState.lastRecoveryDecision = 'auth-popup-cancelled';
+  } else {
+    runtimeState.lastRecoveryDecision = 'auth-popup-failed';
+  }
+  runtimeState.authRecoveryState = 'failed';
+  runtimeState.authRecoveryError = message;
+  runtimeState.lastRuntimeValidationFailure = message;
+  recordRuntimeEvent({
+    type: 'runtime_auth_failure',
+    providerId: 'puter',
+    message: `puter-auth-popup-${popupState}: ${message}`,
+  });
 }
 
 export function setPuterRuntimeMode(executionMode: RuntimeExecutionMode, reason: string) {
@@ -802,64 +853,9 @@ export async function beginPuterAuthBootstrap(): Promise<AuthBootstrapResult> {
 
   authBootstrapPromise = (async () => {
     try {
-      const puter = await ensurePuterLoaded();
-      const signIn = puter.auth?.signIn;
-
-      runtimeState.authRecoveryAttempts += 1;
-      runtimeState.authRecoveryState = 'recovering';
-      runtimeState.authBootstrapStartedAt = now();
-      runtimeState.authRecoveryError = null;
-      runtimeState.lastRecoveryDecision = 'auth-bootstrap-started';
-      recordRuntimeEvent({
-        type: 'runtime_recovery',
-        providerId: 'puter',
-        message: 'puter-auth-bootstrap-started',
-      });
-
-      if (!signIn) {
-        const error = 'Puter signIn unavailable';
-        runtimeState.authRecoveryState = 'failed';
-        runtimeState.authRecoveryError = error;
-        runtimeState.lastRuntimeValidationFailure = error;
-        runtimeState.lastRecoveryDecision = 'auth-bootstrap-unavailable';
-        return {
-          ok: false,
-          authState: runtimeState.authState,
-          mode: runtimeState.executionMode,
-          reason: runtimeState.modeReason,
-          error,
-        };
-      }
-
-      await withTimeout(Promise.resolve(signIn()), DEFAULT_OPERATION_TIMEOUT_MS, 'Puter sign-in');
-      const validation = await validateRuntimeExecution();
-      if (!validation.available) {
-        const error = validation.reason || 'auth-bootstrap-validation-failed';
-        runtimeState.authRecoveryState = 'failed';
-        runtimeState.authRecoveryError = error;
-        runtimeState.lastRecoveryDecision = 'auth-bootstrap-failed';
-        return {
-          ok: false,
-          authState: runtimeState.authState,
-          mode: runtimeState.executionMode,
-          reason: runtimeState.modeReason,
-          error,
-        };
-      }
-
-      markAuthRecoveryRecovered();
-      runtimeState.lastRecoveryDecision = 'auth-bootstrap-succeeded';
-      recordRuntimeEvent({
-        type: 'runtime_recovery',
-        providerId: 'puter',
-        message: 'puter-auth-bootstrap-succeeded',
-      });
-      return {
-        ok: true,
-        authState: runtimeState.authState,
-        mode: runtimeState.executionMode,
-        reason: runtimeState.modeReason,
-      };
+      await ensurePuterLoaded();
+      authBootstrapPromise = null;
+      return await beginPuterAuthPopupFromUserGesture();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       runtimeState.authRecoveryState = 'failed';
@@ -877,6 +873,115 @@ export async function beginPuterAuthBootstrap(): Promise<AuthBootstrapResult> {
         mode: runtimeState.executionMode,
         reason: runtimeState.modeReason,
         error: message,
+      };
+    } finally {
+      authBootstrapPromise = null;
+    }
+  })();
+
+  return authBootstrapPromise;
+}
+
+export function beginPuterAuthPopupFromUserGesture(): Promise<AuthBootstrapResult> {
+  if (authBootstrapPromise) return authBootstrapPromise;
+
+  const puter = typeof window !== 'undefined' ? window.puter : undefined;
+  const signIn = puter?.auth?.signIn;
+  if (!signIn) {
+    const error = 'Puter signIn unavailable';
+    runtimeState.authRecoveryState = 'failed';
+    runtimeState.authRecoveryError = error;
+    runtimeState.lastRuntimeValidationFailure = error;
+    runtimeState.lastRecoveryDecision = 'auth-bootstrap-unavailable';
+    runtimeState.authPopupState = 'failed';
+    runtimeState.authPopupError = error;
+    return Promise.resolve({
+      ok: false,
+      authState: runtimeState.authState,
+      mode: runtimeState.executionMode,
+      reason: runtimeState.modeReason,
+      error,
+    });
+  }
+
+  let signInResult: unknown;
+  try {
+    signInResult = signIn();
+  } catch (error) {
+    runtimeState.authRecoveryAttempts += 1;
+    runtimeState.authBootstrapStartedAt = now();
+    markAuthPopupFailure(error);
+    return Promise.resolve({
+      ok: false,
+      authState: runtimeState.authState,
+      mode: runtimeState.executionMode,
+      reason: runtimeState.modeReason,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  runtimeState.authRecoveryAttempts += 1;
+  runtimeState.authRecoveryState = 'recovering';
+  runtimeState.authBootstrapStartedAt = now();
+  runtimeState.authRecoveryError = null;
+  runtimeState.authPopupState = 'opened';
+  runtimeState.authPopupOpenedAt = now();
+  runtimeState.authPopupError = null;
+  runtimeState.lastRecoveryDecision = 'auth-popup-opened';
+  recordRuntimeEvent({
+    type: 'runtime_recovery',
+    providerId: 'puter',
+    message: 'puter-auth-popup-opened',
+  });
+
+  authBootstrapPromise = (async () => {
+    try {
+      await withTimeout(Promise.resolve(signInResult), DEFAULT_OPERATION_TIMEOUT_MS, 'Puter sign-in');
+      runtimeState.authPopupState = 'closed';
+      runtimeState.authPopupClosedAt = now();
+      runtimeState.lastRecoveryDecision = 'auth-popup-closed';
+
+      const validation = await validateRuntimeExecution();
+      if (!validation.available) {
+        const error = validation.reason || 'auth-bootstrap-validation-failed';
+        runtimeState.authRecoveryState = 'failed';
+        runtimeState.authRecoveryError = error;
+        runtimeState.authPopupState = 'failed';
+        runtimeState.authPopupError = error;
+        runtimeState.lastRecoveryDecision = 'auth-bootstrap-failed';
+        return {
+          ok: false,
+          authState: runtimeState.authState,
+          mode: runtimeState.executionMode,
+          reason: runtimeState.modeReason,
+          error,
+        };
+      }
+
+      markAuthRecoveryRecovered();
+      runtimeState.authPopupState = 'completed';
+      runtimeState.authPopupCompletedAt = now();
+      runtimeState.authPopupError = null;
+      runtimeState.lastRecoveryDecision = 'auth-bootstrap-succeeded';
+      recordRuntimeEvent({
+        type: 'runtime_recovery',
+        providerId: 'puter',
+        message: 'puter-auth-bootstrap-succeeded',
+      });
+      return {
+        ok: true,
+        authState: runtimeState.authState,
+        mode: runtimeState.executionMode,
+        reason: runtimeState.modeReason,
+      };
+    } catch (error) {
+      markAuthPopupFailure(error);
+      return {
+        ok: false,
+        authState: runtimeState.authState,
+        mode: runtimeState.executionMode,
+        reason: runtimeState.modeReason,
+        error: error instanceof Error ? error.message : String(error),
       };
     } finally {
       authBootstrapPromise = null;
@@ -1303,6 +1408,12 @@ export function resetPuterRuntimeForTests() {
     lastAuthReplaySuccessAt: null,
     lastAuthReplayFailureAt: null,
     authReplayError: null,
+    authPopupState: 'idle',
+    authPopupOpenedAt: null,
+    authPopupClosedAt: null,
+    authPopupBlockedAt: null,
+    authPopupCompletedAt: null,
+    authPopupError: null,
   } satisfies PuterRuntimeState);
   discoveredModelsCache = null;
   puterLoadPromise = null;

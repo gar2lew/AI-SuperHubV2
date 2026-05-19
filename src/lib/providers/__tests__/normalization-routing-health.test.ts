@@ -22,6 +22,7 @@ import { puterStream } from "@/lib/providers/puter/chat";
 import {
   getPuterDiscoveredModels,
   beginPuterAuthBootstrap,
+  beginPuterAuthPopupFromUserGesture,
   beginPuterRuntimeBootstrap,
   recordPuterAuthReplayFailed,
   recordPuterAuthReplayPending,
@@ -917,6 +918,72 @@ describe("provider routing and diagnostics state", () => {
       authRecoveryState: "recovered",
       authRecoveryAttempts: 1,
       discoveredModelCount: 1,
+    });
+  });
+
+  it("invokes Puter signIn synchronously for trusted user gesture popup flows", async () => {
+    const order: string[] = [];
+    const signIn = vi.fn().mockImplementation(() => {
+      order.push("signIn");
+      window.puter!.auth = {
+        signIn,
+        isSignedIn: () => Promise.resolve(true),
+        getUser: () => Promise.resolve({ username: "popup-user" }),
+      };
+      return Promise.resolve({ username: "popup-user" });
+    });
+    const listModels = vi.fn().mockResolvedValue([{ id: "gpt-4o", provider: "openai" }]);
+    window.puter = {
+      ai: { listModels },
+      auth: {
+        signIn,
+        isSignedIn: () => Promise.resolve(false),
+        getUser: () => Promise.resolve(null),
+      },
+    };
+
+    const result = beginPuterAuthPopupFromUserGesture();
+    order.push("after-call");
+
+    expect(order).toEqual(["signIn", "after-call"]);
+    expect(getPuterProviderStatus().runtime).toMatchObject({
+      authRecoveryState: "recovering",
+      authPopupState: "opened",
+      authRecoveryAttempts: 1,
+    });
+    await expect(result).resolves.toMatchObject({ ok: true });
+    expect(getPuterProviderStatus().runtime).toMatchObject({
+      authRecoveryState: "recovered",
+      authPopupState: "completed",
+      executionMode: "live",
+    });
+  });
+
+  it("records popup-blocked auth failures without clearing pending replay state", async () => {
+    const signIn = vi.fn(() => {
+      throw new Error("can't access property \"closed\", o is null; window.open returned null");
+    });
+    window.puter = {
+      ai: {
+        listModels: vi.fn().mockResolvedValue([{ id: "gpt-4o", provider: "openai" }]),
+      },
+      auth: {
+        signIn,
+        isSignedIn: () => Promise.resolve(false),
+        getUser: () => Promise.resolve(null),
+      },
+    };
+
+    recordPuterAuthReplayPending("expired-session");
+    await expect(beginPuterAuthPopupFromUserGesture()).resolves.toMatchObject({
+      ok: false,
+    });
+
+    expect(signIn).toHaveBeenCalledTimes(1);
+    expect(getPuterProviderStatus().runtime).toMatchObject({
+      authRecoveryState: "failed",
+      authPopupState: "blocked",
+      pendingAuthReplayCount: 1,
     });
   });
 
