@@ -1,5 +1,9 @@
 import { AlertTriangle, CheckCircle2, ExternalLink, GitCommit, Rocket } from "lucide-react";
-import { deploymentChecklist, deploymentMetadata } from "@/lib/deployment/metadata";
+import {
+  deploymentChecklist,
+  deploymentMetadata,
+  deploymentRuntimeState,
+} from "@/lib/deployment/metadata";
 
 export function DeploymentStatus() {
   const statusTone = deploymentChecklist.status === "ready" ? "text-success" : "text-warning";
@@ -23,7 +27,13 @@ export function DeploymentStatus() {
         <div className="flex items-center justify-between gap-3">
           <span className="text-text-muted">Version</span>
           <span className="text-text-secondary font-mono truncate max-w-[9rem]">
-            {deploymentMetadata.appVersion || "unknown"}
+            {deploymentRuntimeState.runtimeVersionLabel}
+          </span>
+        </div>
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-text-muted">Build ID</span>
+          <span className="text-text-secondary font-mono truncate max-w-[9rem]" data-visual-mask>
+            {deploymentRuntimeState.buildId}
           </span>
         </div>
         <div className="flex items-center justify-between gap-3">

@@ -1,4 +1,5 @@
 import type { Message, AIChunk, ContentPart } from '@/types';
+import { trackObjectUrlCreated } from '@/lib/diagnostics/resourceTracker';
 import { toPuterMessages, type PuterStreamChunk } from './types';
 
 export interface NormalizedImageArtifact {
@@ -64,7 +65,9 @@ function firstImageUrl(response: unknown): string {
   }
 
   if (response instanceof Blob) {
-    return URL.createObjectURL(response);
+    const objectUrl = URL.createObjectURL(response);
+    trackObjectUrlCreated(objectUrl);
+    return objectUrl;
   }
 
   const elementSrc = imageElementSrc(response);
@@ -135,14 +138,14 @@ export function normalizeVisionResponse(response: unknown): ContentPart[] {
 
 export function normalizeTTSResponse(response: unknown, voice?: string): NormalizedTTSArtifact {
   const blob = response instanceof Blob ? response : undefined;
-  const url =
-    typeof response === 'string'
-      ? response
-      : blob
-        ? URL.createObjectURL(blob)
-        : response && typeof response === 'object' && typeof (response as { url?: unknown }).url === 'string'
-          ? String((response as { url: string }).url)
-          : '';
+  const url = typeof response === 'string'
+    ? response
+    : blob
+      ? URL.createObjectURL(blob)
+      : response && typeof response === 'object' && typeof (response as { url?: unknown }).url === 'string'
+        ? String((response as { url: string }).url)
+        : '';
+  if (blob) trackObjectUrlCreated(url);
 
   return {
     id: artifactId('audio'),

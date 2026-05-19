@@ -6,6 +6,7 @@ import { getModelMetadata } from '@/lib/models/metadata';
 import { modelRegistry } from '@/lib/models/registry';
 import { formatProviderError } from '@/lib/providers/errors';
 import { resetPuterConnectionStateForRetry } from '@/lib/providers/puter/runtime';
+import { trackObjectUrlRevoked } from '@/lib/diagnostics/resourceTracker';
 import type { NormalizedImageArtifact } from '@/lib/providers/puter/normalize';
 
 const DEFAULT_IMAGE_MODEL = 'gpt-image-1-mini';
@@ -21,11 +22,15 @@ export function ImageWorkspace() {
   const [history, setHistory] = useState<NormalizedImageArtifact[]>(() => readImageHistory());
   const [preview, setPreview] = useState<NormalizedImageArtifact | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const historyRef = useRef(history);
   const selectedModel = modelRegistry.get(model);
 
   const generate = async () => {
     if (!prompt.trim() || isGenerating) return;
-    resetPuterConnectionStateForRetry();
+    if (!resetPuterConnectionStateForRetry()) {
+      setStatus('Retry cooling down');
+      return;
+    }
     const controller = new AbortController();
     abortControllerRef.current = controller;
     setIsGenerating(true);
@@ -39,7 +44,13 @@ export function ImageWorkspace() {
         if (event.type === 'status') {
           setStatus(event.content === 'done' || event.content === 'aborted' ? 'Ready' : event.content);
         }
-        if (event.type === 'artifact') setHistory((prev) => [event.artifact, ...prev].slice(0, 12));
+        if (event.type === 'artifact') {
+          setHistory((prev) => {
+            const next = [event.artifact, ...prev].slice(0, 12);
+            revokeRemovedObjectUrls(prev, next);
+            return next;
+          });
+        }
       }
     } catch (error) {
       if ((error as Error).name === 'AbortError') {
@@ -60,12 +71,23 @@ export function ImageWorkspace() {
   };
 
   useEffect(() => {
+    historyRef.current = history;
     try {
-      window.localStorage.setItem(IMAGE_HISTORY_KEY, JSON.stringify(history.slice(0, 12)));
+      window.localStorage.setItem(IMAGE_HISTORY_KEY, JSON.stringify(history.filter((item) => !isObjectUrl(item.url)).slice(0, 12)));
     } catch {
       // Image history is a convenience cache; failures should not block generation.
     }
   }, [history]);
+
+  useEffect(() => {
+    return () => {
+      abortControllerRef.current?.abort();
+      historyRef.current.forEach((artifact) => {
+        if (isObjectUrl(artifact.url)) URL.revokeObjectURL(artifact.url);
+        trackObjectUrlRevoked(artifact.url);
+      });
+    };
+  }, []);
 
   return (
     <section className="workspace-surface">
@@ -151,7 +173,15 @@ export function ImageWorkspace() {
           history.map((artifact) => (
             <figure key={artifact.id} className="artifact-card">
               <button className="image-preview-button" onClick={() => setPreview(artifact)} aria-label="Open image preview">
-                <img src={artifact.url} alt={artifact.prompt || 'Generated artifact'} loading="lazy" />
+                <img
+                  src={artifact.url}
+                  alt={artifact.prompt || 'Generated artifact'}
+                  loading="lazy"
+                  onError={() => {
+                    setStatus('Image load failed');
+                    setError('Generated image could not be rendered.');
+                  }}
+                />
               </button>
               <figcaption>
                 <span>{artifact.prompt}</span>
@@ -171,7 +201,14 @@ export function ImageWorkspace() {
             <button className="lightbox-close" onClick={() => setPreview(null)} aria-label="Close preview">
               <X size={18} />
             </button>
-            <img src={preview.url} alt={preview.prompt || 'Generated artifact preview'} />
+            <img
+              src={preview.url}
+              alt={preview.prompt || 'Generated artifact preview'}
+              onError={() => {
+                setStatus('Image load failed');
+                setError('Generated image preview could not be rendered.');
+              }}
+            />
             <div className="lightbox-caption">
               <span>{preview.prompt}</span>
               <a href={preview.url} download={`image-${preview.id}.png`}>
@@ -184,6 +221,20 @@ export function ImageWorkspace() {
       )}
     </section>
   );
+}
+
+function isObjectUrl(url: string) {
+  return url.startsWith('blob:');
+}
+
+function revokeRemovedObjectUrls(previous: NormalizedImageArtifact[], next: NormalizedImageArtifact[]) {
+  const retained = new Set(next.map((artifact) => artifact.url));
+  previous.forEach((artifact) => {
+    if (isObjectUrl(artifact.url) && !retained.has(artifact.url)) {
+      URL.revokeObjectURL(artifact.url);
+      trackObjectUrlRevoked(artifact.url);
+    }
+  });
 }
 
 function readImageHistory(): NormalizedImageArtifact[] {
@@ -200,6 +251,7 @@ function readImageHistory(): NormalizedImageArtifact[] {
         item.type === 'image' &&
         typeof item.id === 'string' &&
         typeof item.url === 'string' &&
+        !isObjectUrl(item.url) &&
         typeof item.createdAt === 'number'
       );
     });

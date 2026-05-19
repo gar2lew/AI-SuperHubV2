@@ -21,6 +21,12 @@ export interface DeploymentMetadata {
   isProduction: boolean;
 }
 
+export interface DeploymentRuntimeState {
+  buildId: string;
+  runtimeVersionLabel: string;
+  staleAssetDetected: boolean;
+}
+
 export interface DeploymentChecklistItem {
   id: "version" | "commit" | "timestamp" | "environment" | "preview-url" | "public-env" | "frontend-only";
   label: string;
@@ -62,6 +68,8 @@ export const deploymentChecklist = buildDeploymentChecklist(
   import.meta.env as EnvMap
 );
 
+export const deploymentRuntimeState = resolveDeploymentRuntimeState(deploymentMetadata);
+
 export function resolveDeploymentMetadata(
   env: EnvMap,
   generated: StaticDeploymentMetadata
@@ -89,6 +97,24 @@ export function resolveDeploymentMetadata(
     productionUrl: normalizeUrl(productionUrl),
     isPreview: vercelEnv === "preview",
     isProduction: vercelEnv === "production",
+  };
+}
+
+export function resolveDeploymentRuntimeState(
+  metadata: DeploymentMetadata,
+  previousBuildId?: string | null
+): DeploymentRuntimeState {
+  const buildId = [
+    metadata.appVersion || "unknown-version",
+    metadata.shortCommitSha || "unknown-commit",
+    metadata.deploymentTimestamp || "unknown-build-time",
+  ].join(":");
+  const runtimeVersionLabel = `${metadata.appVersion || "unknown"} (${metadata.shortCommitSha || "unknown"})`;
+
+  return {
+    buildId,
+    runtimeVersionLabel,
+    staleAssetDetected: Boolean(previousBuildId && previousBuildId !== buildId),
   };
 }
 

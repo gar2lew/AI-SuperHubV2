@@ -1,4 +1,6 @@
+import { useEffect, useMemo } from 'react';
 import { Image as ImageIcon } from 'lucide-react';
+import { trackObjectUrlCreated, trackObjectUrlRevoked } from '@/lib/diagnostics/resourceTracker';
 
 interface VisionMessageProps {
   url?: string;
@@ -7,7 +9,22 @@ interface VisionMessageProps {
 }
 
 export function VisionMessage({ url, file, alt }: VisionMessageProps) {
-  const src = url || (file ? URL.createObjectURL(file) : undefined);
+  const generatedSrc = useMemo(() => {
+    if (url || !file) return undefined;
+    const objectUrl = URL.createObjectURL(file);
+    trackObjectUrlCreated(objectUrl);
+    return objectUrl;
+  }, [file, url]);
+  const src = url || generatedSrc;
+
+  useEffect(() => {
+    return () => {
+      if (generatedSrc) {
+        URL.revokeObjectURL(generatedSrc);
+        trackObjectUrlRevoked(generatedSrc);
+      }
+    };
+  }, [generatedSrc]);
 
   if (!src) {
     return (

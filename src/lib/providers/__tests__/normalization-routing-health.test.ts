@@ -21,10 +21,15 @@ import { getPuterProviderStatus } from "@/lib/providers/puter";
 import { puterStream } from "@/lib/providers/puter/chat";
 import {
   getPuterDiscoveredModels,
+  recordPuterStreamAbort,
   recordPuterFallbackEvent,
   resetPuterConnectionStateForRetry,
   resetPuterRuntimeForTests,
   safePuterChat,
+  safePuterImage,
+  safePuterSTT,
+  safePuterTTS,
+  setActivePuterStream,
   setPuterRuntimeMode,
   validatePuterModels,
   validatePuterSession,
@@ -638,6 +643,174 @@ describe("provider routing and diagnostics state", () => {
       authState: "expired",
       authInvalidatedAt: Date.now(),
       lastRuntimeValidationFailure: "session expired",
+    });
+  });
+
+  it("tracks bounded live operation metrics across image and voice requests", async () => {
+    window.puter = {
+      ai: {
+        listModels: vi.fn().mockResolvedValue([{ id: "gpt-4o", provider: "openai", capabilities: ["chat"] }]),
+        txt2img: () => Promise.resolve("data:image/png;base64,abc"),
+        txt2speech: () => Promise.resolve("data:audio/wav;base64,abc"),
+        speech2txt: () => Promise.resolve({ text: "voice transcript" }),
+      },
+      auth: {
+        isSignedIn: () => Promise.resolve(true),
+        getUser: () => Promise.resolve({ username: "metrics-user" }),
+      },
+    };
+
+    expect(getPuterProviderStatus().runtime.activeRequestCount).toBe(0);
+
+    await safePuterImage("operational image", { model: "gpt-image-1-mini" });
+    await safePuterTTS("hello", { voice: "default" });
+    await safePuterSTT(new Blob(["audio"], { type: "audio/webm" }));
+
+    expect(getPuterProviderStatus().runtime).toMatchObject({
+      activeRequestCount: 0,
+      imageGenerationCount: 1,
+      voiceRequestCount: 2,
+      lastImageLatencyMs: 0,
+      lastTTSLatencyMs: 0,
+      lastSTTLatencyMs: 0,
+      lastSuccessfulLiveRequestAt: Date.now(),
+    });
+  });
+
+  it("records stream abort causes without leaving active stream ownership behind", () => {
+    recordPuterStreamAbort("user-stop");
+
+    expect(getPuterProviderStatus().runtime).toMatchObject({
+      activeStreamId: null,
+      activeStreamCount: 0,
+      streamAbortEvents: 1,
+      lastStreamAbortReason: "user-stop",
+    });
+  });
+
+  it("tracks provider timeout timing for operational diagnostics", async () => {
+    window.puter = {
+      ai: {
+        listModels: vi.fn().mockResolvedValue([{ id: "gpt-4o", provider: "openai", capabilities: ["chat"] }]),
+        chat: () => new Promise(() => undefined),
+      },
+      auth: {
+        isSignedIn: () => Promise.resolve(true),
+        getUser: () => Promise.resolve({ username: "timeout-user" }),
+      },
+    };
+
+    const request = expect(safePuterChat(messages, { model: "claude-sonnet-4", timeoutMs: 25 })).rejects.toThrow(/timeout/i);
+    await vi.advanceTimersByTimeAsync(25);
+
+    await request;
+    expect(getPuterProviderStatus().runtime).toMatchObject({
+      activeRequestCount: 0,
+      lastProviderTimeoutAt: Date.now(),
+      lastRecoveryDecision: "reconnect-scheduled",
+    });
+  });
+
+  it("keeps reconnect timers bounded during repeated long-session failures and records recovery", async () => {
+    window.puter = {
+      ai: {
+        chat: () => Promise.resolve("ok"),
+      },
+      auth: {
+        getUser: () => Promise.reject(new Error("session expired")),
+      },
+    };
+
+    await waitForPuter();
+    for (let index = 0; index < 5; index += 1) {
+      window.dispatchEvent(new ErrorEvent("error", { message: `WebSocket closed ${index}` }));
+    }
+
+    expect(getPuterProviderStatus().runtime).toMatchObject({
+      activeReconnectTimerCount: 1,
+      reconnectAttempts: 1,
+    });
+
+    for (let index = 0; index < 3; index += 1) {
+      const runtime = getPuterProviderStatus().runtime;
+      await vi.advanceTimersByTimeAsync(runtime.nextReconnectAt ? runtime.nextReconnectAt - Date.now() : 0);
+    }
+
+    expect(getPuterProviderStatus().runtime).toMatchObject({
+      activeReconnectTimerCount: 0,
+      reconnectExhausted: true,
+      reconnectExhaustionCount: 1,
+    });
+
+    window.puter.auth = {
+      isSignedIn: () => Promise.resolve(true),
+      getUser: () => Promise.resolve({ username: "soak-recovered" }),
+    };
+    await safePuterChat(messages, { model: "claude-sonnet-4" });
+
+    expect(getPuterProviderStatus().runtime).toMatchObject({
+      reconnectExhausted: false,
+      providerRecoverySuccessCount: 1,
+      activeReconnectTimerCount: 0,
+    });
+  });
+
+  it("tracks runtime validation and stream lifetime for long-session diagnostics", async () => {
+    window.puter = {
+      ai: {
+        listModels: vi.fn().mockResolvedValue([{ id: "gpt-4o", provider: "openai", capabilities: ["chat"] }]),
+      },
+      auth: {
+        isSignedIn: () => Promise.resolve(true),
+        getUser: () => Promise.resolve({ username: "validation-user" }),
+      },
+    };
+
+    await validateRuntimeExecution();
+    setActivePuterStream("stream-long");
+    await vi.advanceTimersByTimeAsync(12_500);
+    setActivePuterStream(null);
+
+    expect(getPuterProviderStatus().runtime).toMatchObject({
+      runtimeValidationCount: 1,
+      activeStreamCount: 0,
+      maxObservedStreamDurationMs: 12_500,
+    });
+  });
+
+  it("records auth refresh, offline recovery, and deploy refresh cleanup", async () => {
+    window.puter = {
+      ai: {
+        chat: () => Promise.resolve("ok"),
+      },
+      auth: {
+        isSignedIn: () => Promise.resolve(false),
+        getUser: () => Promise.resolve(null),
+      },
+    };
+
+    await validateRuntimeExecution();
+    expect(getPuterProviderStatus().runtime).toMatchObject({
+      executionMode: "mock",
+      runtimeActivationSource: "existing-window",
+    });
+
+    window.puter.auth = {
+      isSignedIn: () => Promise.resolve(true),
+      getUser: () => Promise.resolve({ username: "refreshed" }),
+    };
+    await validateRuntimeExecution();
+
+    window.dispatchEvent(new Event("offline"));
+    window.dispatchEvent(new Event("online"));
+    window.dispatchEvent(new PageTransitionEvent("pagehide"));
+
+    expect(getPuterProviderStatus().runtime).toMatchObject({
+      authRefreshCount: 1,
+      offlineRecoveryCount: 1,
+      deployRefreshRecoveryCount: 1,
+      activeReconnectTimerCount: 0,
+      activeStreamCount: 0,
     });
   });
 

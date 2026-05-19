@@ -19,7 +19,8 @@ import {
   subscribeClientErrors,
 } from '@/lib/diagnostics/client-errors';
 import { getRuntimeTelemetrySnapshot } from '@/lib/telemetry/runtimeTelemetry';
-import { deploymentMetadata } from '@/lib/deployment/metadata';
+import { getResourceSnapshot } from '@/lib/diagnostics/resourceTracker';
+import { deploymentMetadata, deploymentRuntimeState } from '@/lib/deployment/metadata';
 import { CAPABILITY_LABELS } from '@/lib/models/capabilities';
 import { getModelMetadata } from '@/lib/models/metadata';
 import { modelRegistry } from '@/lib/models/registry';
@@ -33,6 +34,7 @@ export function DiagnosticsTab() {
   const healthRecords = getAllHealth();
   const analyticsRecords = getAllProviderAnalytics();
   const runtimeTelemetry = getRuntimeTelemetrySnapshot();
+  const resourceSnapshot = getResourceSnapshot();
   const providerIds = Array.from(
     new Set([
       ...healthRecords.map((record) => record.providerId),
@@ -82,7 +84,19 @@ export function DiagnosticsTab() {
         <div className="space-y-1.5 text-xs">
           <div className="flex justify-between">
             <span className="text-text-muted">Version</span>
-            <span className="text-text-secondary">{deploymentMetadata.appVersion || 'unknown'}</span>
+            <span className="text-text-secondary">{deploymentRuntimeState.runtimeVersionLabel}</span>
+          </div>
+          <div className="flex justify-between gap-3">
+            <span className="text-text-muted">Build ID</span>
+            <span className="max-w-[150px] truncate text-right text-text-secondary font-mono" data-visual-mask>
+              {deploymentRuntimeState.buildId}
+            </span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-text-muted">Stale asset</span>
+            <span className={deploymentRuntimeState.staleAssetDetected ? 'text-warning' : 'text-text-secondary'}>
+              {deploymentRuntimeState.staleAssetDetected ? 'detected' : 'no'}
+            </span>
           </div>
           <div className="flex justify-between">
             <span className="text-text-muted">Build</span>
@@ -168,6 +182,10 @@ export function DiagnosticsTab() {
               {runtimeModeLabel}
             </span>
           </div>
+          <div className="flex justify-between">
+            <span className="text-text-muted">Activation</span>
+            <span className="text-text-secondary">{puterStatus.runtime.runtimeActivationSource}</span>
+          </div>
           {puterStatus.runtime.modeReason && (
             <div className="flex justify-between gap-3">
               <span className="text-text-muted">Mode reason</span>
@@ -193,6 +211,10 @@ export function DiagnosticsTab() {
             <span className="text-text-secondary">{formatTimestamp(puterStatus.runtime.authInvalidatedAt)}</span>
           </div>
           <div className="flex justify-between">
+            <span className="text-text-muted">Auth refreshes</span>
+            <span className="text-text-secondary">{puterStatus.runtime.authRefreshCount}</span>
+          </div>
+          <div className="flex justify-between">
             <span className="text-text-muted">Models</span>
             <span className={puterStatus.runtime.modelFetchStatus === 'failed' ? 'text-warning' : 'text-text-secondary'}>
               {puterStatus.runtime.modelFetchStatus} ({puterStatus.runtime.discoveredModelCount})
@@ -207,6 +229,10 @@ export function DiagnosticsTab() {
             <span className="text-text-muted">Last real exec</span>
             <span className="text-text-secondary">{formatTimestamp(puterStatus.runtime.lastSuccessfulRealExecutionAt)}</span>
           </div>
+          <div className="flex justify-between">
+            <span className="text-text-muted">Last live request</span>
+            <span className="text-text-secondary">{formatTimestamp(puterStatus.runtime.lastSuccessfulLiveRequestAt)}</span>
+          </div>
           {puterStatus.runtime.error && (
             <div className="rounded-md border border-error/25 bg-error/10 px-2 py-1 text-[11px] text-error">
               {puterStatus.runtime.error}
@@ -215,6 +241,10 @@ export function DiagnosticsTab() {
           <div className="flex justify-between">
             <span className="text-text-muted">Timeouts</span>
             <span className="text-text-secondary">{puterStatus.runtime.timeoutEvents}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-text-muted">Last timeout</span>
+            <span className="text-text-secondary">{formatTimestamp(puterStatus.runtime.lastProviderTimeoutAt)}</span>
           </div>
           <div className="flex justify-between">
             <span className="text-text-muted">Reconnects</span>
@@ -229,10 +259,26 @@ export function DiagnosticsTab() {
             <span className="text-text-secondary">{puterStatus.runtime.lastReconnectDelayMs ?? 0}ms</span>
           </div>
           <div className="flex justify-between">
+            <span className="text-text-muted">Reconnect timers</span>
+            <span className={puterStatus.runtime.activeReconnectTimerCount > 0 ? 'text-success' : 'text-text-secondary'}>
+              {puterStatus.runtime.activeReconnectTimerCount}
+            </span>
+          </div>
+          <div className="flex justify-between">
             <span className="text-text-muted">Reconnect exhausted</span>
             <span className={puterStatus.runtime.reconnectExhausted ? 'text-warning' : 'text-text-secondary'}>
               {puterStatus.runtime.reconnectExhausted ? 'yes' : 'no'}
             </span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-text-muted">Exhaustions</span>
+            <span className={puterStatus.runtime.reconnectExhaustionCount > 0 ? 'text-warning' : 'text-text-secondary'}>
+              {puterStatus.runtime.reconnectExhaustionCount}
+            </span>
+          </div>
+          <div className="grid grid-cols-2 gap-1 text-[10px] text-text-muted">
+            <span>Offline recoveries {puterStatus.runtime.offlineRecoveryCount}</span>
+            <span>Deploy refreshes {puterStatus.runtime.deployRefreshRecoveryCount}</span>
           </div>
           <div className="flex justify-between">
             <span className="text-text-muted">WS failures</span>
@@ -242,6 +288,32 @@ export function DiagnosticsTab() {
             <span className="text-text-muted">Fallbacks</span>
             <span className="text-text-secondary">{puterStatus.runtime.fallbackEvents}</span>
           </div>
+          <div className="flex justify-between">
+            <span className="text-text-muted">Active requests</span>
+            <span className={puterStatus.runtime.activeRequestCount > 0 ? 'text-success' : 'text-text-secondary'}>
+              {puterStatus.runtime.activeRequestCount}
+            </span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-text-muted">Active streams</span>
+            <span className={puterStatus.runtime.activeStreamCount > 0 ? 'text-success' : 'text-text-secondary'}>
+              {puterStatus.runtime.activeStreamCount}
+            </span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-text-muted">Stream aborts</span>
+            <span className={puterStatus.runtime.streamAbortEvents > 0 ? 'text-warning' : 'text-text-secondary'}>
+              {puterStatus.runtime.streamAbortEvents}
+            </span>
+          </div>
+          {puterStatus.runtime.lastStreamAbortReason && (
+            <div className="flex justify-between gap-3">
+              <span className="text-text-muted">Abort cause</span>
+              <span className="max-w-[150px] truncate text-right text-text-secondary">
+                {puterStatus.runtime.lastStreamAbortReason}
+              </span>
+            </div>
+          )}
           <div className="flex justify-between">
             <span className="text-text-muted">Retry blocks</span>
             <span className={puterStatus.runtime.duplicateRetryBlocks > 0 ? 'text-warning' : 'text-text-secondary'}>
@@ -254,6 +326,10 @@ export function DiagnosticsTab() {
               {puterStatus.runtime.lastRecoveryDecision ?? 'none'}
             </span>
           </div>
+          <div className="flex justify-between">
+            <span className="text-text-muted">Recoveries</span>
+            <span className="text-text-secondary">{puterStatus.runtime.providerRecoverySuccessCount}</span>
+          </div>
           {puterStatus.runtime.lastRuntimeValidationFailure && (
             <div className="rounded-md border border-warning/25 bg-warning/10 px-2 py-1 text-[11px] text-warning">
               {puterStatus.runtime.lastRuntimeValidationFailure}
@@ -264,6 +340,23 @@ export function DiagnosticsTab() {
             <span className="text-text-secondary">
               {puterStatus.runtime.providerLatencyMs ?? 0}ms
             </span>
+          </div>
+          <div className="grid grid-cols-3 gap-1 pt-1 text-[10px] text-text-muted">
+            <span>Image {puterStatus.runtime.lastImageLatencyMs ?? 0}ms</span>
+            <span>TTS {puterStatus.runtime.lastTTSLatencyMs ?? 0}ms</span>
+            <span>STT {puterStatus.runtime.lastSTTLatencyMs ?? 0}ms</span>
+          </div>
+          <div className="grid grid-cols-2 gap-1 text-[10px] text-text-muted">
+            <span>Images {puterStatus.runtime.imageGenerationCount}/{puterStatus.runtime.imageFailureCount} failed</span>
+            <span>Voice {puterStatus.runtime.voiceRequestCount}/{puterStatus.runtime.voiceFailureCount} failed</span>
+          </div>
+          <div className="grid grid-cols-2 gap-1 text-[10px] text-text-muted">
+            <span>Validations {puterStatus.runtime.runtimeValidationCount}</span>
+            <span>Long stream {formatMs(puterStatus.runtime.maxObservedStreamDurationMs)}</span>
+          </div>
+          <div className="grid grid-cols-2 gap-1 text-[10px] text-text-muted">
+            <span>Object URLs {resourceSnapshot.activeObjectUrlCount}</span>
+            <span>Media tracks {resourceSnapshot.activeMediaTrackCount}</span>
           </div>
         </div>
       </div>

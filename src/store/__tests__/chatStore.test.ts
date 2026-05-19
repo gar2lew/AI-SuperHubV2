@@ -290,6 +290,7 @@ describe("chatStore", () => {
   it("ignores stale stream finalization and keeps the current stream owner intact", () => {
     const firstId = useChatStore.getState().createConversation();
     const firstStreamId = useChatStore.getState().startStreaming(firstId, "puter", "puter-gpt-5");
+    useChatStore.getState().stopStreaming();
     vi.setSystemTime(new Date("2026-05-13T08:00:01.000Z"));
     vi.spyOn(Math, "random").mockReturnValue(0.87654321);
     const secondId = useChatStore.getState().createConversation();
@@ -313,6 +314,7 @@ describe("chatStore", () => {
     const staleEngine = useChatStore.getState().streamEngine;
 
     useChatStore.getState().appendChunk({ type: "text", content: "stale" });
+    useChatStore.getState().stopStreaming();
     const secondStreamId = useChatStore.getState().startStreaming(id, "puter", "puter-gpt-5");
     staleEngine?.push({ type: "text", content: "zombie" });
     staleEngine?.done();
@@ -651,6 +653,17 @@ describe("chatStore", () => {
     expect(() => useChatStore.getState().attachExecutionDependency(rootId, rootId)).toThrow("invalid execution dependency");
     useChatStore.getState().attachExecutionDependency(childId, rootId);
     expect(() => useChatStore.getState().attachExecutionDependency(rootId, childId)).toThrow("circular execution dependency");
+  });
+
+  it("prevents concurrent active stream ownership from being created directly", () => {
+    const conversationId = useChatStore.getState().createConversation();
+    const firstStreamId = useChatStore.getState().startStreaming(conversationId, "puter", "puter-gpt-5");
+
+    expect(() => useChatStore.getState().startStreaming(conversationId, "puter", "puter-gpt-5")).toThrow(
+      /stream already active/i
+    );
+    expect(useChatStore.getState().getCurrentStreamId()).toBe(firstStreamId);
+    expect(useChatStore.getState().isStreaming).toBe(true);
   });
 
   it("repairs hydrated execution graph references safely", () => {

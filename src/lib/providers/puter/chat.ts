@@ -2,7 +2,7 @@ import type { Message, AIChunk } from '@/types';
 import { findLast } from '@/lib/utils';
 import { resolveProviderRuntimeModelId } from '@/lib/models/runtime-ids';
 import { normalizePuterChunk, normalizePuterResponse } from './normalize';
-import { safePuterChat, setActivePuterStream } from './runtime';
+import { recordPuterStreamAbort, safePuterChat, setActivePuterStream } from './runtime';
 
 const DEFAULT_PUTER_CHAT_MODEL = 'gpt-4o';
 
@@ -61,6 +61,7 @@ export async function* puterStream(
     let sequence = 0;
     for await (const chunk of stream as AsyncIterable<unknown>) {
       if (abortSignal?.aborted) {
+        recordPuterStreamAbort('abort-signal');
         yield { type: 'status', content: 'aborted', metadata: { streamId, sequence } };
         return;
       }

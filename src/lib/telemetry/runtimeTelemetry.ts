@@ -22,6 +22,7 @@ export type RuntimeEventType =
   | 'websocket_disconnect'
   | 'websocket_reconnect'
   | 'runtime_auth_failure'
+  | 'runtime_recovery'
   | 'image_generation'
   | 'image_failure'
   | 'voice_start'

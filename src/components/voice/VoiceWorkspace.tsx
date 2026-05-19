@@ -1,7 +1,8 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Mic, Pause, Play, Radio, Square, Volume2 } from 'lucide-react';
 import { speechToText, textToSpeechArtifact } from '@/lib/providers/puter/speech';
 import { formatProviderError } from '@/lib/providers/errors';
+import { trackMediaTrackAcquired, trackMediaTrackReleased, trackObjectUrlRevoked } from '@/lib/diagnostics/resourceTracker';
 
 const VOICES = ['default', 'Joanna', 'Matthew', 'Amy'];
 
@@ -13,23 +14,35 @@ export function VoiceWorkspace() {
   const [speed, setSpeed] = useState(1);
   const [volume, setVolume] = useState(0.85);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioObjectUrlRef = useRef<string | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
 
   const speak = async () => {
     if (!text.trim()) return;
     setStatus('Synthesizing');
     try {
+      cleanupAudio();
       const artifact = await textToSpeechArtifact(text, { voice });
       const audio = new Audio(artifact.url);
       audio.playbackRate = speed;
       audio.volume = volume;
       audioRef.current = audio;
+      audioObjectUrlRef.current = artifact.blob ? artifact.url : null;
       audio.onplay = () => setStatus('Playing');
       audio.onpause = () => setStatus('Paused');
-      audio.onended = () => setStatus('Idle');
+      audio.onended = () => {
+        setStatus('Idle');
+        cleanupAudio();
+      };
+      audio.onerror = () => {
+        setStatus('Playback failed');
+        cleanupAudio();
+      };
       await audio.play();
     } catch (error) {
+      cleanupAudio();
       setStatus(formatProviderError(error, 'TTS failed'));
     }
   };
@@ -45,16 +58,18 @@ export function VoiceWorkspace() {
     let stream: MediaStream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      trackMediaTrackAcquired(stream.getTracks().length);
     } catch {
       setStatus('Microphone unavailable');
       return;
     }
     chunksRef.current = [];
+    mediaStreamRef.current = stream;
     const recorder = new MediaRecorder(stream);
     mediaRecorderRef.current = recorder;
     recorder.ondataavailable = (event) => chunksRef.current.push(event.data);
     recorder.onstop = async () => {
-      stream.getTracks().forEach((track) => track.stop());
+      cleanupMediaStream();
       setStatus('Transcribing');
       try {
         const transcript = await speechToText(new Blob(chunksRef.current, { type: 'audio/webm' }));
@@ -67,6 +82,20 @@ export function VoiceWorkspace() {
     recorder.start();
     setRecording(true);
   };
+
+  useEffect(() => {
+    return () => {
+      cleanupAudio();
+      try {
+        if (mediaRecorderRef.current?.state === 'recording') {
+          mediaRecorderRef.current.stop();
+        }
+      } catch {
+        // Recorder cleanup should never block workspace unmount.
+      }
+      cleanupMediaStream();
+    };
+  }, []);
 
   return (
     <section className="workspace-surface voice-surface">
@@ -82,7 +111,11 @@ export function VoiceWorkspace() {
         <button onClick={speak} className="voice-button" title="Play speech" aria-label="Play speech">
           <Play size={22} />
         </button>
-        <button onClick={() => audioRef.current?.pause()} className="voice-button" title="Pause speech" aria-label="Pause speech">
+        <button onClick={() => {
+          audioRef.current?.pause();
+          cleanupAudio();
+          setStatus('Paused');
+        }} className="voice-button" title="Pause speech" aria-label="Pause speech">
           <Pause size={22} />
         </button>
         <button onClick={toggleRecording} className={`voice-button ${recording ? 'is-recording' : ''}`} title="Record" aria-label={recording ? 'Stop recording' : 'Start recording'}>
@@ -150,4 +183,29 @@ export function VoiceWorkspace() {
       </div>
     </section>
   );
+
+  function cleanupAudio() {
+    const audio = audioRef.current;
+    if (audio) {
+      audio.onplay = null;
+      audio.onpause = null;
+      audio.onended = null;
+      audio.onerror = null;
+      audio.pause();
+      audio.src = '';
+      audioRef.current = null;
+    }
+    if (audioObjectUrlRef.current) {
+      URL.revokeObjectURL(audioObjectUrlRef.current);
+      trackObjectUrlRevoked(audioObjectUrlRef.current);
+      audioObjectUrlRef.current = null;
+    }
+  }
+
+  function cleanupMediaStream() {
+    const tracks = mediaStreamRef.current?.getTracks() ?? [];
+    tracks.forEach((track) => track.stop());
+    trackMediaTrackReleased(tracks.length);
+    mediaStreamRef.current = null;
+  }
 }

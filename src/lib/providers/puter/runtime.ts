@@ -14,6 +14,13 @@ const MAX_RECONNECT_DELAY_MS = 5000;
 
 type RuntimeStatus = 'idle' | 'loading' | 'ready' | 'cooldown' | 'error';
 export type RuntimeExecutionMode = 'live' | 'mock' | 'fallback' | 'offline';
+export type RuntimeActivationSource =
+  | 'unknown'
+  | 'existing-window'
+  | 'script-load'
+  | 'reconnect'
+  | 'revalidation'
+  | 'deployment-refresh';
 export type PuterConnectionState =
   | 'disconnected'
   | 'connecting'
@@ -97,6 +104,31 @@ export interface PuterRuntimeState {
   authInvalidatedAt: number | null;
   lastRuntimeValidationFailure: string | null;
   lastRecoveryDecision: string | null;
+  activeRequestCount: number;
+  activeStreamCount: number;
+  lastSuccessfulLiveRequestAt: number | null;
+  lastProviderTimeoutAt: number | null;
+  lastImageLatencyMs: number | null;
+  lastTTSLatencyMs: number | null;
+  lastSTTLatencyMs: number | null;
+  imageGenerationCount: number;
+  imageFailureCount: number;
+  voiceRequestCount: number;
+  voiceFailureCount: number;
+  streamAbortEvents: number;
+  lastStreamAbortReason: string | null;
+  activeReconnectTimerCount: number;
+  reconnectExhaustionCount: number;
+  providerRecoverySuccessCount: number;
+  runtimeValidationCount: number;
+  activeStreamStartedAt: number | null;
+  maxObservedStreamDurationMs: number;
+  runtimeActivationSource: RuntimeActivationSource;
+  authRefreshCount: number;
+  offlineRecoveryCount: number;
+  deployRefreshRecoveryCount: number;
+  lastOfflineRecoveryAt: number | null;
+  lastDeploymentRefreshAt: number | null;
 }
 
 export interface SafeChatOptions {
@@ -144,6 +176,31 @@ const runtimeState: PuterRuntimeState = {
   authInvalidatedAt: null,
   lastRuntimeValidationFailure: null,
   lastRecoveryDecision: null,
+  activeRequestCount: 0,
+  activeStreamCount: 0,
+  lastSuccessfulLiveRequestAt: null,
+  lastProviderTimeoutAt: null,
+  lastImageLatencyMs: null,
+  lastTTSLatencyMs: null,
+  lastSTTLatencyMs: null,
+  imageGenerationCount: 0,
+  imageFailureCount: 0,
+  voiceRequestCount: 0,
+  voiceFailureCount: 0,
+  streamAbortEvents: 0,
+  lastStreamAbortReason: null,
+  activeReconnectTimerCount: 0,
+  reconnectExhaustionCount: 0,
+  providerRecoverySuccessCount: 0,
+  runtimeValidationCount: 0,
+  activeStreamStartedAt: null,
+  maxObservedStreamDurationMs: 0,
+  runtimeActivationSource: 'unknown',
+  authRefreshCount: 0,
+  offlineRecoveryCount: 0,
+  deployRefreshRecoveryCount: 0,
+  lastOfflineRecoveryAt: null,
+  lastDeploymentRefreshAt: null,
 };
 
 let puterLoadPromise: Promise<void> | null = null;
@@ -167,6 +224,10 @@ function setConnectionState(connectionState: PuterConnectionState) {
   }
 }
 
+function setRuntimeActivationSource(runtimeActivationSource: RuntimeActivationSource) {
+  runtimeState.runtimeActivationSource = runtimeActivationSource;
+}
+
 export function setPuterRuntimeMode(executionMode: RuntimeExecutionMode, reason: string) {
   if (runtimeState.executionMode !== executionMode || runtimeState.modeReason !== reason) {
     runtimeState.executionMode = executionMode;
@@ -176,6 +237,12 @@ export function setPuterRuntimeMode(executionMode: RuntimeExecutionMode, reason:
 }
 
 function markOperationalSuccess() {
+  const recoveredFromRuntimePressure =
+    runtimeState.reconnectAttempts > 0 ||
+    runtimeState.reconnectExhausted ||
+    runtimeState.connectionState === 'degraded' ||
+    runtimeState.connectionState === 'reconnecting' ||
+    runtimeState.connectionState === 'timeout';
   runtimeState.ready = true;
   runtimeState.loading = false;
   runtimeState.status = 'ready';
@@ -188,6 +255,11 @@ function markOperationalSuccess() {
   runtimeState.retryRateLimitedUntil = null;
   runtimeState.lastRecoveryDecision = 'provider-operation-succeeded';
   runtimeState.lastSuccessfulRealExecutionAt = now();
+  runtimeState.lastSuccessfulLiveRequestAt = now();
+  if (recoveredFromRuntimePressure) {
+    runtimeState.providerRecoverySuccessCount += 1;
+  }
+  setRuntimeActivationSource('revalidation');
   setPuterRuntimeMode('live', 'real-provider-execution');
   setConnectionState('connected');
 }
@@ -216,6 +288,9 @@ function isAuthLikeError(error: unknown) {
 function markFailure(error: unknown) {
   runtimeState.error = error instanceof Error ? error.message : String(error);
   runtimeState.lastFailureAt = now();
+  if (/timeout/i.test(runtimeState.error)) {
+    runtimeState.lastProviderTimeoutAt = now();
+  }
   if (isConnectionLikeError(error)) {
     runtimeState.websocketFailures += 1;
     runtimeState.reconnectExhausted = false;
@@ -314,6 +389,7 @@ export async function ensurePuterLoaded(timeoutMs = DEFAULT_LOAD_TIMEOUT_MS) {
   if (window.puter) {
     runtimeState.loaded = true;
     runtimeState.initializedAt ||= now();
+    setRuntimeActivationSource('existing-window');
     markRuntimeLoadedReady();
     return window.puter;
   }
@@ -331,6 +407,7 @@ export async function ensurePuterLoaded(timeoutMs = DEFAULT_LOAD_TIMEOUT_MS) {
 
     runtimeState.loaded = true;
     runtimeState.initializedAt = now();
+    setRuntimeActivationSource('script-load');
     markRuntimeLoadedReady();
     return window.puter;
   } catch (error) {
@@ -388,6 +465,10 @@ export async function ensurePuterAuthenticated() {
 
 export async function validatePuterSession() {
   const puter = await ensurePuterLoaded();
+  runtimeState.runtimeValidationCount += 1;
+  const wasUnauthenticated =
+    runtimeState.authState === 'unauthenticated' ||
+    runtimeState.authState === 'expired';
   try {
     const signedIn = puter.auth?.isSignedIn
       ? await withTimeout(Promise.resolve(puter.auth.isSignedIn()), DEFAULT_LOAD_TIMEOUT_MS, 'Puter sign-in check')
@@ -404,6 +485,12 @@ export async function validatePuterSession() {
     runtimeState.lastRuntimeValidationAt = now();
     runtimeState.authInvalidatedAt = null;
     runtimeState.lastRuntimeValidationFailure = null;
+    if (authenticated) {
+      if (wasUnauthenticated) {
+        runtimeState.authRefreshCount += 1;
+      }
+      setRuntimeActivationSource('revalidation');
+    }
     setPuterRuntimeMode(authenticated ? 'live' : 'mock', authenticated ? 'authenticated-session' : 'unauthenticated-session');
     if (authenticated) {
       runtimeState.ready = true;
@@ -539,6 +626,7 @@ export async function safePuterChat(messages: Message[], options: SafeChatOption
   const system = extractSystemPrompt(messages);
   const puterMessages = formatMessages(messages);
 
+  runtimeState.activeRequestCount += 1;
   try {
     const response = await withTimeout(
       Promise.resolve(
@@ -567,6 +655,8 @@ export async function safePuterChat(messages: Message[], options: SafeChatOption
     markFailure(error);
     scheduleReconnect();
     throw error;
+  } finally {
+    runtimeState.activeRequestCount = Math.max(0, runtimeState.activeRequestCount - 1);
   }
 }
 
@@ -580,6 +670,8 @@ export async function safePuterImage(prompt: string, options: Record<string, unk
   const { timeoutMs, ...imageOptions } = options;
   const hasOptions = Object.keys(imageOptions).length > 0;
 
+  runtimeState.activeRequestCount += 1;
+  runtimeState.imageGenerationCount += 1;
   try {
     const response = await withTimeout(
       Promise.resolve(imageApi(prompt, hasOptions ? imageOptions : undefined)),
@@ -587,9 +679,11 @@ export async function safePuterImage(prompt: string, options: Record<string, unk
       'Puter image'
     );
     runtimeState.providerLatencyMs = now() - startedAt;
+    runtimeState.lastImageLatencyMs = runtimeState.providerLatencyMs;
     markOperationalSuccess();
     return response;
   } catch (error) {
+    runtimeState.imageFailureCount += 1;
     recordClientError({
       source: 'provider-call',
       error,
@@ -602,6 +696,8 @@ export async function safePuterImage(prompt: string, options: Record<string, unk
     markFailure(error);
     scheduleReconnect();
     throw error;
+  } finally {
+    runtimeState.activeRequestCount = Math.max(0, runtimeState.activeRequestCount - 1);
   }
 }
 
@@ -611,16 +707,22 @@ export async function safePuterTTS(text: string, options: Record<string, unknown
   if (!validation.available) throw new Error(`Puter runtime unavailable: ${validation.reason}`);
   const ttsApi = puter.ai?.txt2speech || puter.ai?.tts;
   if (!ttsApi) throw new Error('Puter text-to-speech is unavailable');
+  runtimeState.activeRequestCount += 1;
+  runtimeState.voiceRequestCount += 1;
   try {
     const startedAt = now();
     const response = await withTimeout(Promise.resolve(ttsApi(text, options)), DEFAULT_OPERATION_TIMEOUT_MS, 'Puter TTS');
     runtimeState.providerLatencyMs = now() - startedAt;
+    runtimeState.lastTTSLatencyMs = runtimeState.providerLatencyMs;
     markOperationalSuccess();
     return response;
   } catch (error) {
+    runtimeState.voiceFailureCount += 1;
     markFailure(error);
     scheduleReconnect();
     throw error;
+  } finally {
+    runtimeState.activeRequestCount = Math.max(0, runtimeState.activeRequestCount - 1);
   }
 }
 
@@ -630,21 +732,74 @@ export async function safePuterSTT(audio: Blob, options: Record<string, unknown>
   if (!validation.available) throw new Error(`Puter runtime unavailable: ${validation.reason}`);
   const sttApi = puter.ai?.speech2txt || puter.ai?.stt;
   if (!sttApi) throw new Error('Puter speech-to-text is unavailable');
+  runtimeState.activeRequestCount += 1;
+  runtimeState.voiceRequestCount += 1;
   try {
     const startedAt = now();
     const response = await withTimeout(Promise.resolve(sttApi(audio, options)), DEFAULT_OPERATION_TIMEOUT_MS, 'Puter STT');
     runtimeState.providerLatencyMs = now() - startedAt;
+    runtimeState.lastSTTLatencyMs = runtimeState.providerLatencyMs;
     markOperationalSuccess();
     return response;
   } catch (error) {
+    runtimeState.voiceFailureCount += 1;
     markFailure(error);
     scheduleReconnect();
     throw error;
+  } finally {
+    runtimeState.activeRequestCount = Math.max(0, runtimeState.activeRequestCount - 1);
   }
 }
 
 export function setActivePuterStream(streamId: string | null) {
+  if (!streamId && runtimeState.activeStreamStartedAt) {
+    runtimeState.maxObservedStreamDurationMs = Math.max(
+      runtimeState.maxObservedStreamDurationMs,
+      now() - runtimeState.activeStreamStartedAt
+    );
+  }
   runtimeState.activeStreamId = streamId;
+  runtimeState.activeStreamCount = streamId ? 1 : 0;
+  runtimeState.activeStreamStartedAt = streamId ? now() : null;
+}
+
+export function recordPuterStreamAbort(reason: string) {
+  runtimeState.streamAbortEvents += 1;
+  runtimeState.lastStreamAbortReason = reason;
+  runtimeState.activeStreamId = null;
+  runtimeState.activeStreamCount = 0;
+  runtimeState.activeStreamStartedAt = null;
+  runtimeState.lastRecoveryDecision = 'stream-aborted';
+  recordRuntimeEvent({
+    type: 'stream_abort',
+    providerId: 'puter',
+    message: reason,
+  });
+}
+
+function clearReconnectTimer() {
+  if (reconnectTimer) clearTimeout(reconnectTimer);
+  reconnectTimer = null;
+  runtimeState.activeReconnectTimerCount = 0;
+  runtimeState.nextReconnectAt = null;
+}
+
+export function recordPuterDeploymentRefreshRecovery(reason = 'deployment-refresh') {
+  clearReconnectTimer();
+  runtimeState.deployRefreshRecoveryCount += 1;
+  runtimeState.lastDeploymentRefreshAt = now();
+  runtimeState.lastRecoveryDecision = 'deployment-refresh-recovery';
+  runtimeState.reconnectAttempts = 0;
+  runtimeState.reconnectExhausted = false;
+  runtimeState.activeStreamId = null;
+  runtimeState.activeStreamCount = 0;
+  runtimeState.activeStreamStartedAt = null;
+  setRuntimeActivationSource('deployment-refresh');
+  recordRuntimeEvent({
+    type: 'runtime_recovery',
+    providerId: 'puter',
+    message: reason,
+  });
 }
 
 export function recordPuterFallbackEvent(fromProvider?: string, toProvider?: string) {
@@ -684,6 +839,7 @@ function scheduleReconnect() {
   if (reconnectTimer) return;
   if (runtimeState.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
     runtimeState.reconnectExhausted = true;
+    runtimeState.reconnectExhaustionCount += 1;
     runtimeState.lastRecoveryDecision = 'reconnect-exhausted';
     if (runtimeState.connectionState === 'reconnecting') {
       setConnectionState('degraded');
@@ -707,17 +863,23 @@ function scheduleReconnect() {
   setConnectionState('reconnecting');
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
+    runtimeState.activeReconnectTimerCount = 0;
     runtimeState.nextReconnectAt = null;
     ensurePuterLoaded(5000)
       .then(() => ensurePuterAuthenticated())
       .then((authenticated) => {
-        if (!authenticated) scheduleReconnect();
+        if (authenticated) {
+          setRuntimeActivationSource('reconnect');
+        } else {
+          scheduleReconnect();
+        }
       })
       .catch(() => {
         if (runtimeState.reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
           scheduleReconnect();
         } else {
           runtimeState.reconnectExhausted = true;
+          runtimeState.reconnectExhaustionCount += 1;
           runtimeState.lastRecoveryDecision = 'reconnect-exhausted';
           if (runtimeState.connectionState === 'reconnecting') {
             setConnectionState('degraded');
@@ -725,6 +887,7 @@ function scheduleReconnect() {
         }
       });
   }, reconnectDelayMs);
+  runtimeState.activeReconnectTimerCount = 1;
 }
 
 function getReconnectDelayMs(attempt: number) {
@@ -742,6 +905,7 @@ function installRuntimeListeners() {
     runtimeState.ready = false;
     runtimeState.loading = false;
     runtimeState.reconnectExhausted = false;
+    runtimeState.lastRecoveryDecision = 'offline-detected';
     recordRuntimeEvent({
       type: 'websocket_disconnect',
       providerId: 'puter',
@@ -750,7 +914,13 @@ function installRuntimeListeners() {
     setConnectionState('disconnected');
   });
   window.addEventListener('online', () => {
+    runtimeState.offlineRecoveryCount += 1;
+    runtimeState.lastOfflineRecoveryAt = now();
+    runtimeState.lastRecoveryDecision = 'offline-recovery';
     scheduleReconnect();
+  });
+  window.addEventListener('pagehide', () => {
+    recordPuterDeploymentRefreshRecovery('pagehide');
   });
   window.addEventListener('error', (event) => {
     if (isConnectionLikeError(event.message || event.error)) {
@@ -818,9 +988,33 @@ export function resetPuterRuntimeForTests() {
     authInvalidatedAt: null,
     lastRuntimeValidationFailure: null,
     lastRecoveryDecision: null,
+    activeRequestCount: 0,
+    activeStreamCount: 0,
+    lastSuccessfulLiveRequestAt: null,
+    lastProviderTimeoutAt: null,
+    lastImageLatencyMs: null,
+    lastTTSLatencyMs: null,
+    lastSTTLatencyMs: null,
+    imageGenerationCount: 0,
+    imageFailureCount: 0,
+    voiceRequestCount: 0,
+    voiceFailureCount: 0,
+    streamAbortEvents: 0,
+    lastStreamAbortReason: null,
+    activeReconnectTimerCount: 0,
+    reconnectExhaustionCount: 0,
+    providerRecoverySuccessCount: 0,
+    runtimeValidationCount: 0,
+    activeStreamStartedAt: null,
+    maxObservedStreamDurationMs: 0,
+    runtimeActivationSource: 'unknown',
+    authRefreshCount: 0,
+    offlineRecoveryCount: 0,
+    deployRefreshRecoveryCount: 0,
+    lastOfflineRecoveryAt: null,
+    lastDeploymentRefreshAt: null,
   } satisfies PuterRuntimeState);
   discoveredModelsCache = null;
   puterLoadPromise = null;
-  if (reconnectTimer) clearTimeout(reconnectTimer);
-  reconnectTimer = null;
+  clearReconnectTimer();
 }

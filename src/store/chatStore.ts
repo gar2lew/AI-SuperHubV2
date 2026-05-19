@@ -2425,6 +2425,9 @@ export const useChatStore = create<ChatState>()(
       },
 
       startStreaming: (conversationId, providerId, modelId, runtimeModelId, retryPrompt) => {
+        if (get().currentStreamId || get().isStreaming) {
+          throw new Error('stream already active');
+        }
         const streamId = generateStreamId();
         const now = Date.now();
         const messageId = `msg-${streamId}`;

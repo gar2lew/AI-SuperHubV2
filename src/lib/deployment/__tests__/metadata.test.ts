@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildDeploymentChecklist,
+  resolveDeploymentRuntimeState,
   resolveDeploymentMetadata,
   validatePublicDeploymentEnv,
 } from "@/lib/deployment/metadata";
@@ -101,6 +102,34 @@ describe("deployment metadata", () => {
 
     expect(checklist.status).toBe("ready");
     expect(checklist.items.every((item) => item.state === "ready")).toBe(true);
+  });
+
+  it("derives deterministic runtime build identity and stale asset state", () => {
+    const metadata = resolveDeploymentMetadata(
+      {
+        VITE_APP_VERSION: "1.2.3",
+        VITE_COMMIT_SHA: "abcdef123456",
+        VITE_DEPLOYMENT_TIMESTAMP: "2026-05-13T12:00:00.000Z",
+        VITE_VERCEL_ENV: "production",
+        VITE_VERCEL_URL: "ai-superhub.vercel.app",
+      },
+      {
+        appVersion: "",
+        commitSha: "",
+        deploymentTimestamp: "",
+        vercelEnv: "",
+        vercelUrl: "",
+      }
+    );
+
+    expect(resolveDeploymentRuntimeState(metadata, "1.2.2:oldsha:2026-05-12T00:00:00.000Z")).toMatchObject({
+      buildId: "1.2.3:abcdef1:2026-05-13T12:00:00.000Z",
+      runtimeVersionLabel: "1.2.3 (abcdef1)",
+      staleAssetDetected: true,
+    });
+    expect(resolveDeploymentRuntimeState(metadata, "1.2.3:abcdef1:2026-05-13T12:00:00.000Z")).toMatchObject({
+      staleAssetDetected: false,
+    });
   });
 });
 
