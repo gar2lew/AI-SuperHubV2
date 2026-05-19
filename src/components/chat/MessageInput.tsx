@@ -72,7 +72,7 @@ export function MessageInput() {
       const prompt = detail?.prompt;
       if (!prompt) return;
       if (useChatStore.getState().isStreaming) return;
-      resetPuterConnectionStateForRetry();
+      if (!resetPuterConnectionStateForRetry()) return;
       recordRuntimeEvent({
         type: 'retry_triggered',
         providerId: detail.providerId,

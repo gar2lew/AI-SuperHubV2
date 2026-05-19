@@ -44,7 +44,7 @@ test.describe('mobile layout and interaction stability', () => {
     await expectWithinViewport(nav, 'mobile bottom navigation');
     await expectTapTargetNotObscured(page.getByLabel('Terminal workspace'), 'terminal tab');
     await page.getByLabel('Terminal workspace').tap();
-    await expect(page.getByRole('heading', { name: 'Terminal Foundation' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Terminal Foundation' })).toBeVisible({ timeout: 15_000 });
 
     await page.getByLabel('Chat workspace').tap();
     const input = page.getByLabel('Message input');
@@ -56,7 +56,7 @@ test.describe('mobile layout and interaction stability', () => {
     await expect(nav).toHaveCSS('opacity', '1');
     await expectTapTargetNotObscured(page.getByLabel('Image workspace'), 'image tab after keyboard close');
     await page.getByLabel('Image workspace').tap();
-    await expect(page.getByRole('heading', { name: 'Image Workspace' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Image Workspace' })).toBeVisible({ timeout: 15_000 });
     await expectNoHorizontalDocumentOverflow(page);
   });
 

@@ -56,11 +56,16 @@ export function DiagnosticsTab() {
   const chunkRate = durationMs > 0 ? Math.round((chunkCount / durationMs) * 1000) : 0;
   const fps = diagnostics?.throughputPerSecond ? Math.min(60, diagnostics.throughputPerSecond) : 0;
   const streamHealth = !streaming ? 'idle' : chunkRate > 0 ? 'streaming' : 'warming';
+  const runtimeModeLabel = formatRuntimeMode(puterStatus.runtime.executionMode, puterStatus.runtime.modeReason);
 
   return (
     <div className="space-y-4">
       <div className="diagnostic-summary">
-        <MetricBadge label="Runtime" value={puterStatus.readiness} tone={puterStatus.available ? 'success' : 'warning'} />
+        <MetricBadge
+          label="Runtime"
+          value={runtimeModeLabel}
+          tone={puterStatus.runtime.executionMode === 'live' ? 'success' : puterStatus.runtime.executionMode === 'offline' ? 'neutral' : 'warning'}
+        />
         <MetricBadge label="Stream" value={streamHealth} tone={streaming ? 'success' : 'neutral'} />
         <MetricBadge label="FPS" value={String(fps)} tone={fps > 0 ? 'success' : 'neutral'} />
         <MetricBadge label="Errors" value={String(clientErrors.length)} tone={clientErrors.length > 0 ? 'warning' : 'neutral'} />
@@ -158,6 +163,18 @@ export function DiagnosticsTab() {
             </span>
           </div>
           <div className="flex justify-between">
+            <span className="text-text-muted">Mode</span>
+            <span className={puterStatus.runtime.executionMode === 'live' ? 'text-success' : 'text-warning'}>
+              {runtimeModeLabel}
+            </span>
+          </div>
+          {puterStatus.runtime.modeReason && (
+            <div className="flex justify-between gap-3">
+              <span className="text-text-muted">Mode reason</span>
+              <span className="max-w-[150px] truncate text-right text-text-secondary">{puterStatus.runtime.modeReason}</span>
+            </div>
+          )}
+          <div className="flex justify-between">
             <span className="text-text-muted">Readiness</span>
             <span className="text-text-secondary">{puterStatus.readiness}</span>
           </div>
@@ -170,6 +187,25 @@ export function DiagnosticsTab() {
             <span className="text-text-secondary">
               {puterStatus.runtime.authState}
             </span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-text-muted">Auth invalidated</span>
+            <span className="text-text-secondary">{formatTimestamp(puterStatus.runtime.authInvalidatedAt)}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-text-muted">Models</span>
+            <span className={puterStatus.runtime.modelFetchStatus === 'failed' ? 'text-warning' : 'text-text-secondary'}>
+              {puterStatus.runtime.modelFetchStatus} ({puterStatus.runtime.discoveredModelCount})
+            </span>
+          </div>
+          {puterStatus.runtime.modelFetchError && (
+            <div className="rounded-md border border-warning/25 bg-warning/10 px-2 py-1 text-[11px] text-warning">
+              {puterStatus.runtime.modelFetchError}
+            </div>
+          )}
+          <div className="flex justify-between">
+            <span className="text-text-muted">Last real exec</span>
+            <span className="text-text-secondary">{formatTimestamp(puterStatus.runtime.lastSuccessfulRealExecutionAt)}</span>
           </div>
           {puterStatus.runtime.error && (
             <div className="rounded-md border border-error/25 bg-error/10 px-2 py-1 text-[11px] text-error">
@@ -185,6 +221,14 @@ export function DiagnosticsTab() {
             <span className="text-text-secondary">{puterStatus.runtime.reconnectAttempts}</span>
           </div>
           <div className="flex justify-between">
+            <span className="text-text-muted">Next reconnect</span>
+            <span className="text-text-secondary">{formatTimestamp(puterStatus.runtime.nextReconnectAt)}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-text-muted">Backoff</span>
+            <span className="text-text-secondary">{puterStatus.runtime.lastReconnectDelayMs ?? 0}ms</span>
+          </div>
+          <div className="flex justify-between">
             <span className="text-text-muted">Reconnect exhausted</span>
             <span className={puterStatus.runtime.reconnectExhausted ? 'text-warning' : 'text-text-secondary'}>
               {puterStatus.runtime.reconnectExhausted ? 'yes' : 'no'}
@@ -198,6 +242,23 @@ export function DiagnosticsTab() {
             <span className="text-text-muted">Fallbacks</span>
             <span className="text-text-secondary">{puterStatus.runtime.fallbackEvents}</span>
           </div>
+          <div className="flex justify-between">
+            <span className="text-text-muted">Retry blocks</span>
+            <span className={puterStatus.runtime.duplicateRetryBlocks > 0 ? 'text-warning' : 'text-text-secondary'}>
+              {puterStatus.runtime.duplicateRetryBlocks}
+            </span>
+          </div>
+          <div className="flex justify-between gap-3">
+            <span className="text-text-muted">Recovery</span>
+            <span className="max-w-[150px] truncate text-right text-text-secondary">
+              {puterStatus.runtime.lastRecoveryDecision ?? 'none'}
+            </span>
+          </div>
+          {puterStatus.runtime.lastRuntimeValidationFailure && (
+            <div className="rounded-md border border-warning/25 bg-warning/10 px-2 py-1 text-[11px] text-warning">
+              {puterStatus.runtime.lastRuntimeValidationFailure}
+            </div>
+          )}
           <div className="flex justify-between">
             <span className="text-text-muted">Latency</span>
             <span className="text-text-secondary">
@@ -553,6 +614,15 @@ export function DiagnosticsTab() {
   );
 }
 
+function formatRuntimeMode(mode: string, reason?: string | null) {
+  const base = mode.toUpperCase();
+  if (!reason) return base;
+  if (reason === 'unauthenticated-session') return `${base} (Unauthenticated)`;
+  if (reason.includes('timeout')) return `${base} (Provider timeout)`;
+  if (reason === 'developer override') return `${base} (Developer override)`;
+  return base;
+}
+
 function formatTime(value: number) {
   return new Intl.DateTimeFormat(undefined, {
     hour: '2-digit',
@@ -575,6 +645,15 @@ function formatBuildTime(value: string) {
     hour: '2-digit',
     minute: '2-digit',
   }).format(new Date(value));
+}
+
+function formatTimestamp(value: number | null) {
+  if (!value) return 'never';
+  return new Intl.DateTimeFormat(undefined, {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  }).format(value);
 }
 
 function MetricBadge({

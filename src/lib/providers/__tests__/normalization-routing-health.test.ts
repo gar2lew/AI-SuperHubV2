@@ -20,10 +20,15 @@ import {
 import { getPuterProviderStatus } from "@/lib/providers/puter";
 import { puterStream } from "@/lib/providers/puter/chat";
 import {
+  getPuterDiscoveredModels,
   recordPuterFallbackEvent,
   resetPuterConnectionStateForRetry,
   resetPuterRuntimeForTests,
   safePuterChat,
+  setPuterRuntimeMode,
+  validatePuterModels,
+  validatePuterSession,
+  validateRuntimeExecution,
 } from "@/lib/providers/puter/runtime";
 import { waitForPuter } from "@/lib/providers/puter";
 import { streamImageGeneration } from "@/lib/providers/puter/image";
@@ -140,6 +145,10 @@ describe("Puter normalization", () => {
           return Promise.resolve(image);
         },
       },
+      auth: {
+        isSignedIn: () => Promise.resolve(true),
+        getUser: () => Promise.resolve({ username: "image-user" }),
+      },
     };
 
     const events = [];
@@ -178,6 +187,10 @@ describe("Puter normalization", () => {
             },
           };
         },
+      },
+      auth: {
+        isSignedIn: () => Promise.resolve(true),
+        getUser: () => Promise.resolve({ username: "chat-user" }),
       },
     };
 
@@ -350,6 +363,7 @@ describe("provider routing and diagnostics state", () => {
 
     expect(status.available).toBe(false);
     expect(status.readiness).toBe("idle");
+    expect(status.runtime.executionMode).toBe("offline");
     expect(status.runtime).toMatchObject({
       loaded: false,
       ready: false,
@@ -395,13 +409,14 @@ describe("provider routing and diagnostics state", () => {
 
     await waitForPuter();
     window.dispatchEvent(new ErrorEvent("error", { message: "WebSocket connection closed" }));
-    await vi.advanceTimersByTimeAsync(1_000);
-    await vi.advanceTimersByTimeAsync(2_000);
-    await vi.advanceTimersByTimeAsync(3_000);
+    for (let index = 0; index < 3; index += 1) {
+      const runtime = getPuterProviderStatus().runtime;
+      await vi.advanceTimersByTimeAsync(runtime.nextReconnectAt ? runtime.nextReconnectAt - Date.now() : 0);
+    }
 
     expect(getPuterProviderStatus().runtime).toMatchObject({
       authState: "expired",
-      connectionState: "connected",
+      connectionState: "degraded",
       reconnectAttempts: 3,
       reconnectExhausted: true,
       websocketFailures: 1,
@@ -421,11 +436,16 @@ describe("provider routing and diagnostics state", () => {
 
     await waitForPuter();
     window.dispatchEvent(new ErrorEvent("error", { message: "WebSocket connection closed" }));
-    await vi.advanceTimersByTimeAsync(1_000);
-    await vi.advanceTimersByTimeAsync(2_000);
-    await vi.advanceTimersByTimeAsync(3_000);
+    for (let index = 0; index < 3; index += 1) {
+      const runtime = getPuterProviderStatus().runtime;
+      await vi.advanceTimersByTimeAsync(runtime.nextReconnectAt ? runtime.nextReconnectAt - Date.now() : 0);
+    }
 
     expect(getPuterProviderStatus().runtime.reconnectExhausted).toBe(true);
+    window.puter.auth = {
+      isSignedIn: () => Promise.resolve(true),
+      getUser: () => Promise.resolve({ username: "recovered-user" }),
+    };
     await safePuterChat(messages, { model: "claude-sonnet-4" });
 
     expect(getPuterProviderStatus().runtime).toMatchObject({
@@ -433,6 +453,202 @@ describe("provider routing and diagnostics state", () => {
       reconnectAttempts: 0,
       reconnectExhausted: false,
       error: null,
+    });
+  });
+
+  it("applies jittered reconnect backoff and suppresses duplicate reconnect scheduling", async () => {
+    window.puter = {
+      ai: {
+        chat: () => Promise.resolve("ok"),
+      },
+      auth: {
+        getUser: () => Promise.reject(new Error("session expired")),
+      },
+    };
+
+    await waitForPuter();
+    window.dispatchEvent(new ErrorEvent("error", { message: "WebSocket connection closed" }));
+    const firstReconnect = getPuterProviderStatus().runtime;
+
+    expect(firstReconnect).toMatchObject({
+      connectionState: "reconnecting",
+      reconnectAttempts: 1,
+    });
+    expect(firstReconnect.lastReconnectDelayMs).toBeGreaterThan(1000);
+    expect(firstReconnect.nextReconnectAt).toBe(Date.now() + firstReconnect.lastReconnectDelayMs!);
+
+    window.dispatchEvent(new ErrorEvent("error", { message: "WebSocket transport closed again" }));
+
+    expect(getPuterProviderStatus().runtime).toMatchObject({
+      reconnectAttempts: 1,
+      websocketFailures: 2,
+    });
+  });
+
+  it("rate limits duplicate retry recovery requests", async () => {
+    window.puter = {
+      ai: {
+        chat: () => Promise.resolve("ok"),
+      },
+      auth: {
+        getUser: () => Promise.resolve({ username: "test" }),
+      },
+    };
+
+    await waitForPuter();
+
+    expect(resetPuterConnectionStateForRetry()).toBe(true);
+    expect(resetPuterConnectionStateForRetry()).toBe(false);
+    expect(getPuterProviderStatus().runtime).toMatchObject({
+      duplicateRetryBlocks: 1,
+      retryRateLimitedUntil: Date.now() + 1500,
+      lastRecoveryDecision: "retry-rate-limited",
+    });
+
+    await vi.advanceTimersByTimeAsync(1500);
+
+    expect(resetPuterConnectionStateForRetry()).toBe(true);
+  });
+
+  it("validates authenticated Puter sessions before live execution", async () => {
+    window.puter = {
+      ai: {
+        chat: () => Promise.resolve("ok"),
+      },
+      auth: {
+        isSignedIn: () => Promise.resolve(true),
+        getUser: () => Promise.resolve({ username: "real-user" }),
+      },
+    };
+
+    await expect(validatePuterSession()).resolves.toMatchObject({
+      authenticated: true,
+      authState: "authenticated",
+    });
+    await expect(validateRuntimeExecution()).resolves.toMatchObject({
+      available: true,
+      mode: "live",
+    });
+    expect(getPuterProviderStatus().runtime).toMatchObject({
+      executionMode: "live",
+      modeReason: "authenticated-session",
+      lastSuccessfulRealExecutionAt: Date.now(),
+    });
+  });
+
+  it("marks unauthenticated sessions as explicit mock mode instead of silent live readiness", async () => {
+    window.puter = {
+      ai: {
+        chat: () => Promise.resolve("should-not-run"),
+      },
+      auth: {
+        isSignedIn: () => Promise.resolve(false),
+        getUser: () => Promise.resolve(null),
+      },
+    };
+
+    await expect(validateRuntimeExecution()).resolves.toMatchObject({
+      available: false,
+      mode: "mock",
+      reason: "unauthenticated-session",
+    });
+    await expect(safePuterChat(messages, { model: "claude-sonnet-4" })).rejects.toThrow(/unauthenticated/i);
+    expect(getPuterProviderStatus().runtime).toMatchObject({
+      executionMode: "mock",
+      modeReason: "unauthenticated-session",
+      authState: "unauthenticated",
+    });
+  });
+
+  it("discovers real Puter models through listModels and caches normalized metadata", async () => {
+    const listModels = vi.fn().mockResolvedValue([
+      {
+        id: "claude-sonnet-4",
+        name: "Claude Sonnet 4",
+        provider: "anthropic",
+        capabilities: ["chat", "vision"],
+      },
+      {
+        model: "gpt-image-1-mini",
+        provider: { id: "openai", name: "OpenAI" },
+        modalities: ["image"],
+      },
+    ]);
+    window.puter = {
+      ai: {
+        listModels,
+      },
+      auth: {
+        isSignedIn: () => Promise.resolve(true),
+        getUser: () => Promise.resolve({ username: "model-user" }),
+      },
+    };
+
+    await expect(validatePuterModels()).resolves.toMatchObject({
+      ok: true,
+      count: 2,
+    });
+    await validatePuterModels();
+
+    expect(listModels).toHaveBeenCalledTimes(1);
+    expect(getPuterDiscoveredModels()).toEqual([
+      expect.objectContaining({
+        runtimeId: "claude-sonnet-4",
+        providerId: "anthropic",
+        capabilities: ["chat", "vision"],
+      }),
+      expect.objectContaining({
+        runtimeId: "gpt-image-1-mini",
+        providerId: "openai",
+        capabilities: ["image"],
+      }),
+    ]);
+    expect(getPuterProviderStatus().runtime).toMatchObject({
+      modelFetchStatus: "success",
+      discoveredModelCount: 2,
+    });
+  });
+
+  it("invalidates stale auth state and model cache when a live session expires", async () => {
+    window.puter = {
+      ai: {
+        listModels: vi.fn().mockResolvedValue([{ id: "gpt-4o", provider: "openai", capabilities: ["chat"] }]),
+      },
+      auth: {
+        isSignedIn: () => Promise.resolve(true),
+        getUser: () => Promise.resolve({ username: "model-user" }),
+      },
+    };
+
+    await validatePuterModels();
+    expect(getPuterDiscoveredModels()).toHaveLength(1);
+
+    window.puter.auth = {
+      isSignedIn: () => Promise.reject(new Error("session expired")),
+      getUser: () => Promise.reject(new Error("session expired")),
+    };
+
+    await expect(validateRuntimeExecution()).resolves.toMatchObject({
+      available: false,
+      mode: "mock",
+      reason: "expired-session",
+    });
+    expect(getPuterDiscoveredModels()).toHaveLength(0);
+    expect(getPuterProviderStatus().runtime).toMatchObject({
+      authState: "expired",
+      authInvalidatedAt: Date.now(),
+      lastRuntimeValidationFailure: "session expired",
+    });
+  });
+
+
+  it("keeps developer mock override explicit and visible", () => {
+    setPuterRuntimeMode("mock", "developer override");
+
+    expect(getPuterProviderStatus().runtime).toMatchObject({
+      executionMode: "mock",
+      modeReason: "developer override",
+      modeActivatedAt: Date.now(),
     });
   });
 

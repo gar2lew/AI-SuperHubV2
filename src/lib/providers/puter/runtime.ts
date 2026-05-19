@@ -8,8 +8,12 @@ const PUTER_SCRIPT_SRC = 'https://js.puter.com/v2/';
 const DEFAULT_LOAD_TIMEOUT_MS = 10000;
 const DEFAULT_OPERATION_TIMEOUT_MS = 60000;
 const FAILURE_COOLDOWN_MS = 15000;
+const RETRY_RATE_LIMIT_MS = 1500;
+const MAX_RECONNECT_ATTEMPTS = 3;
+const MAX_RECONNECT_DELAY_MS = 5000;
 
 type RuntimeStatus = 'idle' | 'loading' | 'ready' | 'cooldown' | 'error';
+export type RuntimeExecutionMode = 'live' | 'mock' | 'fallback' | 'offline';
 export type PuterConnectionState =
   | 'disconnected'
   | 'connecting'
@@ -21,6 +25,7 @@ export type PuterAuthState = 'unknown' | 'authenticated' | 'unauthenticated' | '
 
 interface PuterAI {
   chat?: (messages: ReturnType<typeof formatMessages>, options: SafeChatOptions & { system?: string }) => unknown;
+  listModels?: () => unknown;
   txt2img?: (prompt: string | Record<string, unknown>, options?: Record<string, unknown> | boolean) => unknown;
   img?: (prompt: string | Record<string, unknown>, options?: Record<string, unknown> | boolean) => unknown;
   generateImage?: (prompt: string | Record<string, unknown>, options?: Record<string, unknown> | boolean) => unknown;
@@ -33,8 +38,18 @@ interface PuterAI {
 interface PuterRuntime {
   ai?: PuterAI;
   auth?: {
+    isSignedIn?: () => unknown;
     getUser?: () => unknown;
   };
+}
+
+export interface DiscoveredPuterModel {
+  runtimeId: string;
+  name: string;
+  providerId?: string;
+  providerName?: string;
+  capabilities: string[];
+  raw: unknown;
 }
 
 declare global {
@@ -66,6 +81,22 @@ export interface PuterRuntimeState {
   lastReconnectAt: number | null;
   lastConnectionChangeAt: number | null;
   lastTimeoutAt: number | null;
+  executionMode: RuntimeExecutionMode;
+  modeReason: string | null;
+  modeActivatedAt: number | null;
+  lastSuccessfulRealExecutionAt: number | null;
+  modelFetchStatus: 'idle' | 'success' | 'failed';
+  modelFetchError: string | null;
+  modelFetchAt: number | null;
+  discoveredModelCount: number;
+  lastRuntimeValidationAt: number | null;
+  nextReconnectAt: number | null;
+  lastReconnectDelayMs: number | null;
+  retryRateLimitedUntil: number | null;
+  duplicateRetryBlocks: number;
+  authInvalidatedAt: number | null;
+  lastRuntimeValidationFailure: string | null;
+  lastRecoveryDecision: string | null;
 }
 
 export interface SafeChatOptions {
@@ -97,11 +128,29 @@ const runtimeState: PuterRuntimeState = {
   lastReconnectAt: null,
   lastConnectionChangeAt: null,
   lastTimeoutAt: null,
+  executionMode: 'offline',
+  modeReason: 'runtime-not-loaded',
+  modeActivatedAt: null,
+  lastSuccessfulRealExecutionAt: null,
+  modelFetchStatus: 'idle',
+  modelFetchError: null,
+  modelFetchAt: null,
+  discoveredModelCount: 0,
+  lastRuntimeValidationAt: null,
+  nextReconnectAt: null,
+  lastReconnectDelayMs: null,
+  retryRateLimitedUntil: null,
+  duplicateRetryBlocks: 0,
+  authInvalidatedAt: null,
+  lastRuntimeValidationFailure: null,
+  lastRecoveryDecision: null,
 };
 
 let puterLoadPromise: Promise<void> | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let listenersInstalled = false;
+let discoveredModelsCache: { models: DiscoveredPuterModel[]; fetchedAt: number } | null = null;
+const MODEL_CACHE_TTL_MS = 5 * 60 * 1000;
 
 function now() {
   return Date.now();
@@ -118,6 +167,14 @@ function setConnectionState(connectionState: PuterConnectionState) {
   }
 }
 
+export function setPuterRuntimeMode(executionMode: RuntimeExecutionMode, reason: string) {
+  if (runtimeState.executionMode !== executionMode || runtimeState.modeReason !== reason) {
+    runtimeState.executionMode = executionMode;
+    runtimeState.modeReason = reason;
+    runtimeState.modeActivatedAt = now();
+  }
+}
+
 function markOperationalSuccess() {
   runtimeState.ready = true;
   runtimeState.loading = false;
@@ -126,6 +183,12 @@ function markOperationalSuccess() {
   runtimeState.cooldownUntil = null;
   runtimeState.reconnectAttempts = 0;
   runtimeState.reconnectExhausted = false;
+  runtimeState.nextReconnectAt = null;
+  runtimeState.lastReconnectDelayMs = null;
+  runtimeState.retryRateLimitedUntil = null;
+  runtimeState.lastRecoveryDecision = 'provider-operation-succeeded';
+  runtimeState.lastSuccessfulRealExecutionAt = now();
+  setPuterRuntimeMode('live', 'real-provider-execution');
   setConnectionState('connected');
 }
 
@@ -134,6 +197,9 @@ function markRuntimeLoadedReady() {
   runtimeState.loading = false;
   runtimeState.status = 'ready';
   runtimeState.error = null;
+  if (runtimeState.authenticated) {
+    setPuterRuntimeMode('live', 'authenticated-session');
+  }
   setConnectionState('connected');
 }
 
@@ -158,12 +224,17 @@ function markFailure(error: unknown) {
   if (isAuthLikeError(error)) {
     runtimeState.authState = /expired|session/i.test(runtimeState.error) ? 'expired' : 'unauthenticated';
     runtimeState.authenticated = false;
+    runtimeState.authInvalidatedAt = now();
+    runtimeState.lastRuntimeValidationFailure = runtimeState.error;
+    discoveredModelsCache = null;
+    runtimeState.discoveredModelCount = 0;
     recordRuntimeEvent({
       type: 'runtime_auth_failure',
       providerId: 'puter',
       message: runtimeState.error,
     });
   }
+  setPuterRuntimeMode(isAuthLikeError(error) ? 'mock' : 'fallback', runtimeState.error || 'provider failure');
   runtimeState.cooldownUntil = now() + FAILURE_COOLDOWN_MS;
   runtimeState.status = 'cooldown';
   runtimeState.ready = false;
@@ -296,7 +367,10 @@ export function getPuterAI() {
 }
 
 export function isPuterAvailable() {
-  return !!window.puter?.ai && (!runtimeState.cooldownUntil || runtimeState.cooldownUntil <= now());
+  return !!window.puter?.ai &&
+    runtimeState.authenticated &&
+    runtimeState.executionMode === 'live' &&
+    (!runtimeState.cooldownUntil || runtimeState.cooldownUntil <= now());
 }
 
 export function getPuterReadiness() {
@@ -309,35 +383,155 @@ export function getPuterReadiness() {
 }
 
 export async function ensurePuterAuthenticated() {
+  return (await validatePuterSession()).authenticated;
+}
+
+export async function validatePuterSession() {
   const puter = await ensurePuterLoaded();
   try {
+    const signedIn = puter.auth?.isSignedIn
+      ? await withTimeout(Promise.resolve(puter.auth.isSignedIn()), DEFAULT_LOAD_TIMEOUT_MS, 'Puter sign-in check')
+      : undefined;
     const user = await withTimeout(
       Promise.resolve(puter.auth?.getUser?.()),
       DEFAULT_LOAD_TIMEOUT_MS,
       'Puter auth check'
     );
-    runtimeState.authenticated = !!user;
-    runtimeState.authState = user ? 'authenticated' : 'unauthenticated';
+    const authenticated = signedIn === false ? false : Boolean(user || signedIn);
+    runtimeState.authenticated = authenticated;
+    runtimeState.authState = authenticated ? 'authenticated' : 'unauthenticated';
     runtimeState.lastAuthCheckAt = now();
-    if (user) {
-      markOperationalSuccess();
+    runtimeState.lastRuntimeValidationAt = now();
+    runtimeState.authInvalidatedAt = null;
+    runtimeState.lastRuntimeValidationFailure = null;
+    setPuterRuntimeMode(authenticated ? 'live' : 'mock', authenticated ? 'authenticated-session' : 'unauthenticated-session');
+    if (authenticated) {
+      runtimeState.ready = true;
+      runtimeState.status = 'ready';
+      runtimeState.error = null;
     }
-    return !!user;
-  } catch {
+    return {
+      authenticated,
+      authState: runtimeState.authState,
+      user: user ?? null,
+    };
+  } catch (error) {
     runtimeState.authenticated = false;
     runtimeState.authState = 'expired';
     runtimeState.lastAuthCheckAt = now();
+    runtimeState.lastRuntimeValidationAt = now();
+    runtimeState.authInvalidatedAt = now();
+    runtimeState.lastRuntimeValidationFailure = error instanceof Error ? error.message : String(error);
+    discoveredModelsCache = null;
+    runtimeState.discoveredModelCount = 0;
+    setPuterRuntimeMode('mock', 'expired-session');
+    setConnectionState('degraded');
     recordRuntimeEvent({
       type: 'runtime_auth_failure',
       providerId: 'puter',
-      message: 'Puter auth check failed',
+      message: error instanceof Error ? error.message : 'Puter auth check failed',
     });
-    return false;
+    return {
+      authenticated: false,
+      authState: runtimeState.authState,
+      user: null,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+function normalizeDiscoveredModel(raw: unknown): DiscoveredPuterModel | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const record = raw as Record<string, unknown>;
+  const runtimeId = record.id ?? record.model ?? record.name;
+  if (typeof runtimeId !== 'string' || !runtimeId.trim()) return null;
+  const provider = record.provider;
+  const providerId = typeof provider === 'string'
+    ? provider
+    : provider && typeof provider === 'object' && typeof (provider as Record<string, unknown>).id === 'string'
+      ? String((provider as Record<string, unknown>).id)
+      : undefined;
+  const providerName = provider && typeof provider === 'object' && typeof (provider as Record<string, unknown>).name === 'string'
+    ? String((provider as Record<string, unknown>).name)
+    : providerId;
+  const capabilities = [
+    ...(Array.isArray(record.capabilities) ? record.capabilities : []),
+    ...(Array.isArray(record.modalities) ? record.modalities : []),
+  ].filter((item): item is string => typeof item === 'string');
+  return {
+    runtimeId,
+    name: typeof record.name === 'string' ? record.name : runtimeId,
+    providerId,
+    providerName,
+    capabilities: Array.from(new Set(capabilities)),
+    raw,
+  };
+}
+
+export async function validatePuterModels(options: { force?: boolean } = {}) {
+  const puter = await ensurePuterLoaded();
+  if (!puter.ai?.listModels) {
+    runtimeState.modelFetchStatus = 'failed';
+    runtimeState.modelFetchError = 'Puter listModels unavailable';
+    runtimeState.modelFetchAt = now();
+    setPuterRuntimeMode('fallback', 'model-discovery-unavailable');
+    return { ok: false, count: 0, models: [], error: runtimeState.modelFetchError };
+  }
+  if (!options.force && discoveredModelsCache && now() - discoveredModelsCache.fetchedAt < MODEL_CACHE_TTL_MS) {
+    return { ok: true, count: discoveredModelsCache.models.length, models: discoveredModelsCache.models };
+  }
+  try {
+    const response = await withTimeout(Promise.resolve(puter.ai.listModels()), DEFAULT_OPERATION_TIMEOUT_MS, 'Puter listModels');
+    const rawModels = Array.isArray(response)
+      ? response
+      : response && typeof response === 'object' && Array.isArray((response as Record<string, unknown>).models)
+        ? ((response as Record<string, unknown>).models as unknown[])
+        : [];
+    const models = rawModels.map(normalizeDiscoveredModel).filter((model): model is DiscoveredPuterModel => Boolean(model));
+    discoveredModelsCache = { models, fetchedAt: now() };
+    runtimeState.modelFetchStatus = 'success';
+    runtimeState.modelFetchError = null;
+    runtimeState.modelFetchAt = now();
+    runtimeState.discoveredModelCount = models.length;
+    return { ok: true, count: models.length, models };
+  } catch (error) {
+    runtimeState.modelFetchStatus = 'failed';
+    runtimeState.modelFetchError = error instanceof Error ? error.message : String(error);
+    runtimeState.modelFetchAt = now();
+    setPuterRuntimeMode('fallback', runtimeState.modelFetchError);
+    return { ok: false, count: 0, models: [], error: runtimeState.modelFetchError };
+  }
+}
+
+export function getPuterDiscoveredModels() {
+  return discoveredModelsCache?.models ?? [];
+}
+
+export async function validateRuntimeExecution() {
+  try {
+    const session = await validatePuterSession();
+    if (!session.authenticated) {
+      return {
+        available: false,
+        mode: runtimeState.executionMode,
+        reason: session.authState === 'expired' ? 'expired-session' : 'unauthenticated-session',
+      };
+    }
+    await validatePuterModels();
+    runtimeState.lastSuccessfulRealExecutionAt = now();
+    setPuterRuntimeMode('live', 'authenticated-session');
+    return { available: true, mode: runtimeState.executionMode, reason: runtimeState.modeReason };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    setPuterRuntimeMode('offline', reason);
+    return { available: false, mode: runtimeState.executionMode, reason };
   }
 }
 
 export async function safePuterChat(messages: Message[], options: SafeChatOptions = {}) {
   const puter = await ensurePuterLoaded();
+  const validation = await validateRuntimeExecution();
+  if (!validation.available) throw new Error(`Puter runtime unavailable: ${validation.reason}`);
   const chatApi = puter.ai?.chat;
   if (!chatApi) throw new Error('Puter chat is unavailable');
 
@@ -378,6 +572,8 @@ export async function safePuterChat(messages: Message[], options: SafeChatOption
 
 export async function safePuterImage(prompt: string, options: Record<string, unknown> = {}) {
   const puter = await ensurePuterLoaded();
+  const validation = await validateRuntimeExecution();
+  if (!validation.available) throw new Error(`Puter runtime unavailable: ${validation.reason}`);
   const imageApi = puter.ai?.txt2img || puter.ai?.img || puter.ai?.generateImage;
   if (!imageApi) throw new Error('Puter image generation is unavailable');
   const startedAt = now();
@@ -411,6 +607,8 @@ export async function safePuterImage(prompt: string, options: Record<string, unk
 
 export async function safePuterTTS(text: string, options: Record<string, unknown> = {}) {
   const puter = await ensurePuterLoaded();
+  const validation = await validateRuntimeExecution();
+  if (!validation.available) throw new Error(`Puter runtime unavailable: ${validation.reason}`);
   const ttsApi = puter.ai?.txt2speech || puter.ai?.tts;
   if (!ttsApi) throw new Error('Puter text-to-speech is unavailable');
   try {
@@ -428,6 +626,8 @@ export async function safePuterTTS(text: string, options: Record<string, unknown
 
 export async function safePuterSTT(audio: Blob, options: Record<string, unknown> = {}) {
   const puter = await ensurePuterLoaded();
+  const validation = await validateRuntimeExecution();
+  if (!validation.available) throw new Error(`Puter runtime unavailable: ${validation.reason}`);
   const sttApi = puter.ai?.speech2txt || puter.ai?.stt;
   if (!sttApi) throw new Error('Puter speech-to-text is unavailable');
   try {
@@ -457,20 +657,34 @@ export function getPuterRuntimeState(): PuterRuntimeState {
 }
 
 export function resetPuterConnectionStateForRetry() {
+  if (runtimeState.retryRateLimitedUntil && runtimeState.retryRateLimitedUntil > now()) {
+    runtimeState.duplicateRetryBlocks += 1;
+    runtimeState.lastRecoveryDecision = 'retry-rate-limited';
+    recordRuntimeEvent({
+      type: 'retry_triggered',
+      providerId: 'puter',
+      message: 'duplicate retry suppressed by runtime rate limit',
+    });
+    return false;
+  }
+  runtimeState.retryRateLimitedUntil = now() + RETRY_RATE_LIMIT_MS;
   runtimeState.cooldownUntil = null;
   runtimeState.status = runtimeState.loaded ? 'ready' : 'idle';
   runtimeState.ready = runtimeState.loaded;
   runtimeState.error = null;
   runtimeState.reconnectExhausted = false;
+  runtimeState.lastRecoveryDecision = 'retry-recovery-reset';
   resetHealth('puter');
   setConnectionState(runtimeState.loaded ? 'reconnecting' : 'connecting');
+  return true;
 }
 
 function scheduleReconnect() {
   if (!isBrowserReady()) return;
   if (reconnectTimer) return;
-  if (runtimeState.reconnectAttempts >= 3) {
+  if (runtimeState.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
     runtimeState.reconnectExhausted = true;
+    runtimeState.lastRecoveryDecision = 'reconnect-exhausted';
     if (runtimeState.connectionState === 'reconnecting') {
       setConnectionState('degraded');
     }
@@ -480,30 +694,43 @@ function scheduleReconnect() {
   runtimeState.reconnectExhausted = false;
   runtimeState.reconnectAttempts += 1;
   runtimeState.lastReconnectAt = now();
+  const reconnectDelayMs = getReconnectDelayMs(runtimeState.reconnectAttempts);
+  runtimeState.lastReconnectDelayMs = reconnectDelayMs;
+  runtimeState.nextReconnectAt = now() + reconnectDelayMs;
+  runtimeState.lastRecoveryDecision = 'reconnect-scheduled';
   recordRuntimeEvent({
     type: 'websocket_reconnect',
     providerId: 'puter',
     reconnectCount: runtimeState.reconnectAttempts,
+    message: `retrying in ${reconnectDelayMs}ms`,
   });
   setConnectionState('reconnecting');
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
+    runtimeState.nextReconnectAt = null;
     ensurePuterLoaded(5000)
       .then(() => ensurePuterAuthenticated())
       .then((authenticated) => {
         if (!authenticated) scheduleReconnect();
       })
       .catch(() => {
-        if (runtimeState.reconnectAttempts < 3) {
+        if (runtimeState.reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
           scheduleReconnect();
         } else {
           runtimeState.reconnectExhausted = true;
+          runtimeState.lastRecoveryDecision = 'reconnect-exhausted';
           if (runtimeState.connectionState === 'reconnecting') {
             setConnectionState('degraded');
           }
         }
       });
-  }, Math.min(1000 * runtimeState.reconnectAttempts, 3000));
+  }, reconnectDelayMs);
+}
+
+function getReconnectDelayMs(attempt: number) {
+  const baseDelay = Math.min(1000 * 2 ** Math.max(0, attempt - 1), MAX_RECONNECT_DELAY_MS);
+  const deterministicJitter = (attempt * 137) % 250;
+  return Math.min(baseDelay + deterministicJitter, MAX_RECONNECT_DELAY_MS);
 }
 
 function installRuntimeListeners() {
@@ -575,7 +802,24 @@ export function resetPuterRuntimeForTests() {
     lastReconnectAt: null,
     lastConnectionChangeAt: null,
     lastTimeoutAt: null,
+    executionMode: 'offline',
+    modeReason: 'runtime-not-loaded',
+    modeActivatedAt: null,
+    lastSuccessfulRealExecutionAt: null,
+    modelFetchStatus: 'idle',
+    modelFetchError: null,
+    modelFetchAt: null,
+    discoveredModelCount: 0,
+    lastRuntimeValidationAt: null,
+    nextReconnectAt: null,
+    lastReconnectDelayMs: null,
+    retryRateLimitedUntil: null,
+    duplicateRetryBlocks: 0,
+    authInvalidatedAt: null,
+    lastRuntimeValidationFailure: null,
+    lastRecoveryDecision: null,
   } satisfies PuterRuntimeState);
+  discoveredModelsCache = null;
   puterLoadPromise = null;
   if (reconnectTimer) clearTimeout(reconnectTimer);
   reconnectTimer = null;

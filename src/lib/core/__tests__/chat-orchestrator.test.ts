@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { AIChunk, ContentPart, Conversation, Message } from "@/types";
+import type { AIChunk, Capability, ContentPart, Conversation, Message } from "@/types";
 import type { RoutingResult } from "@/lib/routing/fallback-router";
 import { executeChatRequest, type ChatRequestDependencies } from "@/lib/core/chat-orchestrator";
 
@@ -49,13 +49,13 @@ function deps(primary: RoutingResult | null, fallback?: RoutingResult): ChatRequ
     setAbortController: vi.fn(),
     getCurrentStreamId: vi.fn(() => currentStreamId),
     resolveRoute: vi.fn((modelId: string) => (modelId === "fallback-model" ? fallback ?? null : primary)),
-    getModel: vi.fn(() => ({ label: "Mock Model", capabilities: ["chat"] })),
+    getModel: vi.fn(() => ({ label: "Mock Model", capabilities: ["chat"] as Capability[] })),
     createAbortController: () => new AbortController(),
     recordFailure: vi.fn(),
     recordProviderFallbackTransition: vi.fn(),
     recordPuterFallbackEvent: vi.fn(),
     recordClientError: vi.fn(),
-    formatProviderError: (error) => error.message,
+    formatProviderError: (error) => error instanceof Error ? error.message : String(error),
   };
 }
 
@@ -127,7 +127,7 @@ describe("executeChatRequest", () => {
 
   it("persists a chat-capability error instead of starting a stream for non-chat models", async () => {
     const testDeps = deps(null);
-    testDeps.getModel = vi.fn(() => ({ label: "Image Only", capabilities: ["image"] }));
+    testDeps.getModel = vi.fn(() => ({ label: "Image Only", capabilities: ["image"] as Capability[] }));
 
     const result = await executeChatRequest({
       conversation: conversation(),

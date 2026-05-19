@@ -31,7 +31,7 @@ export interface ExecuteChatRequestOptions {
 }
 
 export interface ChatRequestDependencies {
-  addMessage: (conversationId: string, message: Omit<Message, 'id' | 'createdAt'>) => void;
+  addMessage: (conversationId: string, message: Omit<Message, 'id' | 'createdAt'> & { id?: string }) => void;
   startStreaming: (
     conversationId: string,
     providerId: string,
@@ -47,11 +47,11 @@ export interface ChatRequestDependencies {
   resolveRoute?: (modelId: string, options?: RoutingOptions) => RoutingResult | null;
   getModel?: (modelId: string) => ChatModelSummary | undefined;
   createAbortController?: () => AbortController;
-  recordFailure?: (providerId: string, reason?: string) => void;
+  recordFailure?: (providerId: string, reason?: 'error' | 'timeout') => void;
   recordProviderFallbackTransition?: (fromProviderId: string, toProviderId: string) => void;
-  recordPuterFallbackEvent?: (fromProviderId: string, toProviderId: string) => void;
+  recordPuterFallbackEvent?: (fromProviderId?: string, toProviderId?: string) => void;
   recordClientError?: typeof recordClientError;
-  formatProviderError?: (error: Error) => string;
+  formatProviderError?: (error: unknown, fallback?: string) => string;
 }
 
 export type ChatRequestResult =

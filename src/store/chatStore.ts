@@ -72,7 +72,7 @@ interface ChatState {
   updateConversationMetadata: (id: string, updates: Pick<Conversation, 'summary' | 'tags'>) => void;
   setDraft: (conversationId: string, draft: { text: string; attachments?: Omit<DraftAttachmentMetadata, 'persistenceState'>[] }) => void;
   clearDraft: (conversationId: string) => void;
-  addMessage: (conversationId: string, message: Omit<Message, 'createdAt'> & { id?: string }) => string;
+  addMessage: (conversationId: string, message: Omit<Message, 'id' | 'createdAt'> & { id?: string }) => string;
   updateMessage: (conversationId: string, messageId: string, updates: Partial<Message>) => void;
   createExecution: (input: {
     messageId?: string;
@@ -976,18 +976,29 @@ function sanitizeDrafts(drafts: Partial<Record<string, Partial<ConversationDraft
   );
 }
 
-export function sanitizeHydratedChatState(state: Partial<ChatState>): Partial<ChatState> {
+type HydratedChatStateInput = Partial<Omit<ChatState, 'executionsById'>> & {
+  executionsById?: Record<string, Partial<ExecutionRuntime>>;
+};
+
+export function sanitizeHydratedChatState(state: HydratedChatStateInput): Partial<ChatState> {
+  const executionsById = state.executionsById ?? {};
   const hydratedExecutions: Record<string, ExecutionRuntime> = state.executionsById && typeof state.executionsById === 'object'
     ? Object.fromEntries(
-        Object.entries(state.executionsById).map(([executionId, execution]) => {
+        Object.entries(executionsById).map(([executionId, execution]) => {
           const capability = execution.capability ?? 'chat-generation';
           const capabilityMetadata = execution.capabilityMetadata;
+          const resolvedExecutionId = execution.executionId ?? executionId;
+          const startedAt = execution.startedAt ?? Date.now();
+          const updatedAt = execution.updatedAt ?? startedAt;
+          const lifecycle = execution.lifecycle ?? 'idle';
           return [
             executionId,
             {
               ...execution,
+              executionId: resolvedExecutionId,
+              messageId: execution.messageId ?? generateId(),
               capability,
-              parentExecutionId: execution.parentExecutionId && state.executionsById?.[execution.parentExecutionId]
+              parentExecutionId: execution.parentExecutionId && executionsById[execution.parentExecutionId]
                 ? execution.parentExecutionId
                 : null,
               childExecutionIds: [],
@@ -1002,7 +1013,7 @@ export function sanitizeHydratedChatState(state: Partial<ChatState>): Partial<Ch
               ...(capabilityMetadata ? { capabilityMetadata } : {}),
               timeline: (execution.timeline ?? []).map((event) => ({
                 ...event,
-                executionId: event.executionId ?? execution.executionId,
+                executionId: event.executionId ?? resolvedExecutionId,
                 capability: event.capability ?? capability,
                 parentExecutionId: event.parentExecutionId ?? execution.parentExecutionId ?? null,
                 groupId: event.groupId ?? execution.groupId ?? null,
@@ -1010,21 +1021,25 @@ export function sanitizeHydratedChatState(state: Partial<ChatState>): Partial<Ch
                   ? { capabilityMetadata: event.capabilityMetadata ?? capabilityMetadata }
                   : {}),
               })),
+              lifecycle,
+              startedAt,
+              updatedAt,
+              retryCount: execution.retryCount ?? 0,
               trace: execution.trace ?? [
                 {
-                  executionId: execution.executionId,
+                  executionId: resolvedExecutionId,
                   capability,
-                  lifecycle: execution.lifecycle,
-                  timestamp: execution.startedAt,
+                  lifecycle,
+                  timestamp: startedAt,
                   eventType: 'created' as const,
                   providerId: execution.providerId,
                   modelId: execution.modelId,
                 },
                 {
-                  executionId: execution.executionId,
+                  executionId: resolvedExecutionId,
                   capability,
-                  lifecycle: execution.lifecycle,
-                  timestamp: execution.startedAt,
+                  lifecycle,
+                  timestamp: startedAt,
                   eventType: 'started' as const,
                   providerId: execution.providerId,
                   modelId: execution.modelId,
@@ -1037,7 +1052,7 @@ export function sanitizeHydratedChatState(state: Partial<ChatState>): Partial<Ch
     : {};
   for (const execution of Object.values(hydratedExecutions)) {
     execution.dependencyExecutionIds = uniqueExistingIds(
-      state.executionsById?.[execution.executionId]?.dependencyExecutionIds,
+      executionsById[execution.executionId]?.dependencyExecutionIds,
       hydratedExecutions
     ).filter((dependencyId) => dependencyId !== execution.executionId);
   }
@@ -2633,8 +2648,9 @@ export const useChatStore = create<ChatState>()(
         }
 
         if (content.length > 0) {
-          const activeExecution = get().activeExecutionId
-            ? get().executionsById[get().activeExecutionId]
+          const activeExecutionId = get().activeExecutionId;
+          const activeExecution = activeExecutionId
+            ? get().executionsById[activeExecutionId]
             : undefined;
           get().addMessage(conversationId, {
             id: activeExecution?.messageId,
