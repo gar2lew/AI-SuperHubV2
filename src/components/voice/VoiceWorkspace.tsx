@@ -3,16 +3,19 @@ import { Mic, Pause, Play, Radio, Square, Volume2 } from 'lucide-react';
 import { speechToText, textToSpeechArtifact } from '@/lib/providers/puter/speech';
 import { formatProviderError } from '@/lib/providers/errors';
 import { trackMediaTrackAcquired, trackMediaTrackReleased, trackObjectUrlRevoked } from '@/lib/diagnostics/resourceTracker';
+import { useWorkstationStore } from '@/store/workstationStore';
 
 const VOICES = ['default', 'Joanna', 'Matthew', 'Amy'];
 
 export function VoiceWorkspace() {
-  const [text, setText] = useState('');
-  const [voice, setVoice] = useState(VOICES[0]);
+  const savedState = useWorkstationStore((s) => s.voiceWorkspace);
+  const updateVoiceWorkspace = useWorkstationStore((s) => s.updateVoiceWorkspace);
+  const [text, setText] = useState(savedState.text);
+  const [voice, setVoice] = useState(savedState.voice || VOICES[0]);
   const [status, setStatus] = useState('Idle');
   const [recording, setRecording] = useState(false);
-  const [speed, setSpeed] = useState(1);
-  const [volume, setVolume] = useState(0.85);
+  const [speed, setSpeed] = useState(savedState.speed);
+  const [volume, setVolume] = useState(savedState.volume);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioObjectUrlRef = useRef<string | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -33,8 +36,8 @@ export function VoiceWorkspace() {
       audio.onplay = () => setStatus('Playing');
       audio.onpause = () => setStatus('Paused');
       audio.onended = () => {
-        setStatus('Idle');
         cleanupAudio();
+        window.setTimeout(() => setStatus('Idle'), 1000);
       };
       audio.onerror = () => {
         setStatus('Playback failed');
@@ -73,7 +76,11 @@ export function VoiceWorkspace() {
       setStatus('Transcribing');
       try {
         const transcript = await speechToText(new Blob(chunksRef.current, { type: 'audio/webm' }));
-        setText((prev) => (prev ? `${prev}\n${transcript}` : transcript));
+        setText((prev) => {
+          const next = prev ? `${prev}\n${transcript}` : transcript;
+          updateVoiceWorkspace({ text: next });
+          return next;
+        });
         setStatus('Idle');
       } catch (error) {
         setStatus(formatProviderError(error, 'STT failed'));
@@ -132,14 +139,25 @@ export function VoiceWorkspace() {
       <div className="workspace-control-row">
         <textarea
           value={text}
-          onChange={(event) => setText(event.target.value)}
+          onChange={(event) => {
+            setText(event.target.value);
+            updateVoiceWorkspace({ text: event.target.value });
+          }}
           placeholder="Enter text for TTS or record microphone input for STT..."
           className="workspace-textarea"
           rows={6}
           aria-label="Voice text"
         />
         <div className="workspace-actions">
-          <select value={voice} onChange={(event) => setVoice(event.target.value)} className="workspace-select" aria-label="Voice selection">
+          <select
+            value={voice}
+            onChange={(event) => {
+              setVoice(event.target.value);
+              updateVoiceWorkspace({ voice: event.target.value });
+            }}
+            className="workspace-select"
+            aria-label="Voice selection"
+          >
             {VOICES.map((item) => (
               <option key={item} value={item}>
                 {item}
@@ -154,7 +172,11 @@ export function VoiceWorkspace() {
               max="1.5"
               step="0.05"
               value={speed}
-              onChange={(event) => setSpeed(Number(event.target.value))}
+              onChange={(event) => {
+                const next = Number(event.target.value);
+                setSpeed(next);
+                updateVoiceWorkspace({ speed: next });
+              }}
             />
           </label>
           <label className="range-control">
@@ -171,6 +193,7 @@ export function VoiceWorkspace() {
               onChange={(event) => {
                 const next = Number(event.target.value);
                 setVolume(next);
+                updateVoiceWorkspace({ volume: next });
                 if (audioRef.current) audioRef.current.volume = next;
               }}
             />

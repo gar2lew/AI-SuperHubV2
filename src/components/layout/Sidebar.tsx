@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { useChatStore } from '@/store/chatStore';
 import { useSettingsStore } from '@/store/settingsStore';
+import { useWorkstationStore } from '@/store/workstationStore';
 import { formatDate, truncate } from '@/lib/utils';
 import { modelRegistry } from '@/lib/models/registry';
 import { MODEL_PRESETS, OTHER_MODELS_PRESET_ID, getPreset } from '@/lib/models/presets';
@@ -27,6 +28,7 @@ export function Sidebar() {
   const setActiveWorkspace = useSettingsStore((s) => s.setActiveWorkspace);
   const setSelectedPreset = useSettingsStore((s) => s.setSelectedPreset);
   const setSelectedModel = useSettingsStore((s) => s.setSelectedModel);
+  const recordCommand = useWorkstationStore((s) => s.recordCommand);
 
   const conversations = useChatStore((s) => s.conversations);
   const activeConversationId = useChatStore((s) => s.activeConversationId);
@@ -143,6 +145,7 @@ export function Sidebar() {
                       key={p.id}
                       onClick={() => {
                         setSelectedPreset(p.id);
+                        recordCommand({ kind: 'model', label: p.label, value: p.id });
                         setShowPresetMenu(false);
                       }}
                       className={`command-item w-full text-left px-3 py-2 text-sm ${
@@ -199,6 +202,7 @@ export function Sidebar() {
                       compact
                       onSelect={(modelId) => {
                         setSelectedModel(modelId);
+                        recordCommand({ kind: 'model', label: modelRegistry.get(modelId)?.label ?? modelId, value: modelId });
                         setShowModelMenu(false);
                       }}
                     />

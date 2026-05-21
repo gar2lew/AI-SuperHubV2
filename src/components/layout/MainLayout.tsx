@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useSettingsStore } from '@/store/settingsStore';
+import { useWorkstationStore } from '@/store/workstationStore';
 import { useResponsive } from '@/hooks/useResponsive';
 import { recordWorkspaceActivation } from '@/lib/telemetry/runtimeTelemetry';
 import { Sidebar } from './Sidebar';
@@ -65,6 +66,10 @@ export function MainLayout() {
   const settingsOpen = useSettingsStore((s) => s.settingsOpen);
   const commandPaletteOpen = useSettingsStore((s) => s.commandPaletteOpen);
   const activeWorkspace = useSettingsStore((s) => s.activeWorkspace);
+  const rightPanelWidth = useSettingsStore((s) => s.rightPanelWidth);
+  const metadata = useWorkstationStore((s) => s.metadata);
+  const restoredNoticeDismissedAt = useWorkstationStore((s) => s.restoredNoticeDismissedAt);
+  const markRestoredNoticeDismissed = useWorkstationStore((s) => s.markRestoredNoticeDismissed);
   const { isMobile, isTablet } = useResponsive();
 
   useEffect(() => {
@@ -94,9 +99,9 @@ export function MainLayout() {
         {rightPanelOpen && !isMobile && (
           <motion.div
             initial={{ width: 0, opacity: 0 }}
-            animate={{ width: isTablet ? 288 : 336, opacity: 1 }}
+            animate={{ width: isTablet ? 288 : rightPanelWidth, opacity: 1 }}
             exit={{ width: 0, opacity: 0 }}
-            transition={{ duration: 0.2, ease: 'easeInOut' }}
+            transition={{ duration: 0.16, ease: 'easeOut' }}
             className="utility-panel-shell border-l overflow-hidden"
           >
             <Suspense fallback={<div className="p-4 text-sm text-text-muted">Loading utilities...</div>}>
@@ -112,6 +117,7 @@ export function MainLayout() {
             initial={{ opacity: 0, y: 24 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 24 }}
+            transition={{ duration: 0.16, ease: 'easeOut' }}
             className="utility-panel-shell fixed inset-x-0 bottom-14 z-40 max-h-[70vh] overflow-hidden border-t"
           >
             <Suspense fallback={<div className="p-4 text-sm text-text-muted">Loading utilities...</div>}>
@@ -123,6 +129,17 @@ export function MainLayout() {
 
       <SettingsModal open={settingsOpen} />
       <CommandPalette open={commandPaletteOpen} />
+      {metadata.restoredAt && restoredNoticeDismissedAt !== metadata.restoredAt && (
+        <button
+          type="button"
+          className="restore-indicator"
+          onClick={markRestoredNoticeDismissed}
+          aria-label="Dismiss session restored notice"
+        >
+          <span>Session restored</span>
+          <time>{new Date(metadata.restoredAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time>
+        </button>
+      )}
     </div>
   );
 }

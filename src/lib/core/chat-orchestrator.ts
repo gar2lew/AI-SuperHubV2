@@ -3,6 +3,7 @@ import { textContent } from '@/lib/utils';
 import { assembleContext } from '@/lib/core/context';
 import { recordClientError } from '@/lib/diagnostics/client-errors';
 import { modelRegistry } from '@/lib/models/registry';
+import { detectCapabilityIntent } from '@/lib/models/capability-matrix';
 import { recordProviderFallbackTransition } from '@/lib/providers/analytics';
 import { formatProviderError } from '@/lib/providers/errors';
 import { recordFailure } from '@/lib/providers/health';
@@ -11,6 +12,7 @@ import {
   recordPuterFallbackEvent,
 } from '@/lib/providers/puter/runtime';
 import { resolveRoute, type RoutingOptions, type RoutingResult } from '@/lib/routing/fallback-router';
+import { detectToolExecutionIntent, resolveToolEligibility } from '@/lib/tools/orchestration';
 
 interface ChatModelSummary {
   label: string;
@@ -103,6 +105,16 @@ export async function executeChatRequest(
   const retryForSend = options.retryOverride?.prompt === options.prompt ? options.retryOverride : null;
   const routeModelId = retryForSend?.modelId ?? options.selectedModel;
   const routeProviderId = retryForSend?.providerId ?? options.selectedProvider;
+  const capabilityIntent = detectCapabilityIntent(options.prompt);
+  const toolIntent = detectToolExecutionIntent(options.prompt);
+  const toolEligibility = resolveToolEligibility(toolIntent);
+  const requiredCapabilities = Array.from(new Set([
+    ...capabilityIntent.requiredCapabilities,
+    ...(toolEligibility.eligible ? toolIntent.requiredCapabilities : []),
+  ]));
+  const orchestrationMode = toolEligibility.eligible
+    ? 'tool-eligible'
+    : capabilityIntent.orchestrationMode;
 
   const userMessageForContext: Message = {
     id: `pending-${Date.now()}`,
@@ -139,6 +151,8 @@ export async function executeChatRequest(
     preferredProvider: routeProviderId,
     allowFallback: true,
     respectHealth: retryForSend ? false : undefined,
+    requiredCapabilities,
+    orchestrationMode,
   });
 
   if (!route) {

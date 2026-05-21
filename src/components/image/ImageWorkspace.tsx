@@ -7,15 +7,19 @@ import { modelRegistry } from '@/lib/models/registry';
 import { formatProviderError } from '@/lib/providers/errors';
 import { resetPuterConnectionStateForRetry } from '@/lib/providers/puter/runtime';
 import { trackObjectUrlRevoked } from '@/lib/diagnostics/resourceTracker';
+import { useWorkstationStore } from '@/store/workstationStore';
 import type { NormalizedImageArtifact } from '@/lib/providers/puter/normalize';
 
 const DEFAULT_IMAGE_MODEL = 'gpt-image-1-mini';
 const IMAGE_HISTORY_KEY = 'ai-superhub-image-artifacts';
 
 export function ImageWorkspace() {
-  const [prompt, setPrompt] = useState('');
+  const savedState = useWorkstationStore((s) => s.imageWorkspace);
+  const updateImageWorkspace = useWorkstationStore((s) => s.updateImageWorkspace);
+  const recordPrompt = useWorkstationStore((s) => s.recordPrompt);
+  const [prompt, setPrompt] = useState(savedState.prompt);
   const imageModels = useMemo(() => modelRegistry.getByCapability('image'), []);
-  const [model, setModel] = useState(imageModels[0]?.id ?? DEFAULT_IMAGE_MODEL);
+  const [model, setModel] = useState(savedState.model || imageModels[0]?.id || DEFAULT_IMAGE_MODEL);
   const [isGenerating, setIsGenerating] = useState(false);
   const [status, setStatus] = useState('Ready');
   const [error, setError] = useState<string | null>(null);
@@ -36,6 +40,8 @@ export function ImageWorkspace() {
     setIsGenerating(true);
     setError(null);
     setStatus('Queued');
+    updateImageWorkspace({ prompt: prompt.trim(), model });
+    recordPrompt(prompt.trim(), 'image');
     try {
       for await (const event of streamImageGeneration(prompt.trim(), {
         model,
@@ -102,14 +108,25 @@ export function ImageWorkspace() {
       <div className="workspace-control-row">
         <textarea
           value={prompt}
-          onChange={(event) => setPrompt(event.target.value)}
+          onChange={(event) => {
+            setPrompt(event.target.value);
+            updateImageWorkspace({ prompt: event.target.value });
+          }}
           placeholder="Describe the image to generate..."
           className="workspace-textarea"
           rows={3}
           aria-label="Image prompt"
         />
         <div className="workspace-actions">
-          <select value={model} onChange={(event) => setModel(event.target.value)} className="workspace-select" aria-label="Image model">
+          <select
+            value={model}
+            onChange={(event) => {
+              setModel(event.target.value);
+              updateImageWorkspace({ model: event.target.value });
+            }}
+            className="workspace-select"
+            aria-label="Image model"
+          >
             {imageModels.map((item) => (
               <option key={item.id} value={item.id}>
                 {item.label}

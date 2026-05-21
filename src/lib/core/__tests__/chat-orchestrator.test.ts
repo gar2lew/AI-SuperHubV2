@@ -217,4 +217,46 @@ describe("executeChatRequest", () => {
       content: [{ type: "text", text: "Image Only does not support chat. Choose a chat-capable model or switch to the matching workspace." }],
     });
   });
+
+  it("requests realtime web capability for current-event prompts", async () => {
+    const primary = route("puter", [{ type: "text", content: "weather answer" }]);
+    const testDeps = deps(primary);
+
+    await executeChatRequest({
+      conversation: conversation(),
+      contentParts: [{ type: "text", text: "What is the weather today in Perth?" }],
+      prompt: "What is the weather today in Perth?",
+      selectedModel: "ollama-llama-maverick",
+      selectedProvider: "ollama",
+    }, testDeps);
+
+    expect(testDeps.resolveRoute).toHaveBeenCalledWith(
+      "ollama-llama-maverick",
+      expect.objectContaining({
+        requiredCapabilities: ["streaming", "realtimeWeb", "tools"],
+        orchestrationMode: "tool-eligible",
+      })
+    );
+  });
+
+  it("requests tool-capable routing for realtime market prompts", async () => {
+    const primary = route("puter", [{ type: "text", content: "market answer" }]);
+    const testDeps = deps(primary);
+
+    await executeChatRequest({
+      conversation: conversation(),
+      contentParts: [{ type: "text", text: "current stock price for MSFT" }],
+      prompt: "current stock price for MSFT",
+      selectedModel: "ollama-llama-maverick",
+      selectedProvider: "ollama",
+    }, testDeps);
+
+    expect(testDeps.resolveRoute).toHaveBeenCalledWith(
+      "ollama-llama-maverick",
+      expect.objectContaining({
+        requiredCapabilities: ["streaming", "realtimeWeb", "tools"],
+        orchestrationMode: "tool-eligible",
+      })
+    );
+  });
 });

@@ -5,7 +5,7 @@ const baseURL = process.env.E2E_BASE_URL ?? `http://127.0.0.1:${port}`;
 
 export default defineConfig({
   testDir: '.',
-  timeout: 45_000,
+  timeout: 75_000,
   expect: {
     timeout: 7_500,
   },

@@ -8,10 +8,12 @@ import {
   ShieldAlert,
   Trash2,
   TrendingUp,
+  Wrench,
   Zap,
 } from 'lucide-react';
 import { DeploymentStatus } from '@/components/deployment/DeploymentStatus';
 import { useChatStore } from '@/store/chatStore';
+import { useWorkstationStore } from '@/store/workstationStore';
 import { getAllHealth, getCooldownInfo, getHealth } from '@/lib/providers/health';
 import { getAllProviderAnalytics, getProviderAnalytics } from '@/lib/providers/analytics';
 import { getPuterProviderStatus } from '@/lib/providers/puter';
@@ -25,12 +27,17 @@ import { getRuntimeTelemetrySnapshot } from '@/lib/telemetry/runtimeTelemetry';
 import { getResourceSnapshot } from '@/lib/diagnostics/resourceTracker';
 import { deploymentMetadata, deploymentRuntimeState } from '@/lib/deployment/metadata';
 import { CAPABILITY_LABELS } from '@/lib/models/capabilities';
+import { getCapabilitySummary, RUNTIME_CAPABILITY_LABELS } from '@/lib/models/capability-matrix';
 import { getModelMetadata } from '@/lib/models/metadata';
 import { modelRegistry } from '@/lib/models/registry';
 import { getLastRoutingDiagnostics } from '@/lib/routing/fallback-router';
+import { getLastToolOrchestrationIntent, type ToolExecutionIntent } from '@/lib/tools/orchestration';
+import { getToolRuntimeSnapshot, subscribeToolRuntime, type ToolExecutionSnapshot } from '@/lib/tools/runtime';
 
 export function DiagnosticsTab() {
   const [authActionStatus, setAuthActionStatus] = useState<'idle' | 'working' | 'done' | 'failed'>('idle');
+  const expandedSections = useWorkstationStore((s) => s.diagnosticsWorkspace.expandedSections);
+  const toggleDiagnosticsSection = useWorkstationStore((s) => s.toggleDiagnosticsSection);
   const activeConversation = useChatStore((s) =>
     s.conversations.find((c) => c.id === s.activeConversationId)
   );
@@ -47,6 +54,12 @@ export function DiagnosticsTab() {
   ).sort();
   const puterStatus = getPuterProviderStatus();
   const routeDiagnostics = getLastRoutingDiagnostics();
+  const toolRuntime = useSyncExternalStore(
+    subscribeToolRuntime,
+    getToolRuntimeSnapshot,
+    getToolRuntimeSnapshot
+  );
+  const toolIntent = getLastToolOrchestrationIntent();
   const diagnostics = useChatStore((s) => s.streamEngine?.getDiagnostics());
   const pendingAuthReplay = useChatStore((s) => s.pendingAuthReplay);
   const clientErrors = useSyncExternalStore(
@@ -58,6 +71,7 @@ export function DiagnosticsTab() {
   const streaming = activeConversation?.streaming;
   const activeModel = activeConversation ? modelRegistry.get(activeConversation.modelId) : undefined;
   const activeModelMetadata = activeModel ? getModelMetadata(activeModel) : undefined;
+  const activeCapabilitySummary = activeModel ? getCapabilitySummary(activeModel.id) : undefined;
   const durationMs = streaming ? Date.now() - streaming.startedAt : 0;
   const chunkCount = streaming?.buffer.length || 0;
   const chunkRate = durationMs > 0 ? Math.round((chunkCount / durationMs) * 1000) : 0;
@@ -98,8 +112,8 @@ export function DiagnosticsTab() {
   }
 
   return (
-    <div className="space-y-4">
-      <div className="diagnostic-summary">
+    <div className="diagnostics-stack">
+      <div className="diagnostic-summary diagnostics-sticky diagnostics-priority-0">
         <MetricBadge
           label="Runtime"
           value={runtimeModeLabel}
@@ -111,9 +125,65 @@ export function DiagnosticsTab() {
         <MetricBadge label="Abort" value={`${Math.round(runtimeTelemetry.streams.abortRate * 100)}%`} tone={runtimeTelemetry.streams.aborted > 0 ? 'warning' : 'neutral'} />
       </div>
 
-      <DeploymentStatus />
+      <div className="operator-overview telemetry-card diagnostic-card diagnostics-priority-1 p-3">
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <h4 className="text-xs font-semibold uppercase tracking-wider text-text-primary">
+            Operator Summary
+          </h4>
+          <span className={authNeedsAction || clientErrors.length > 0 ? 'status-pill is-warning' : 'status-pill is-active'}>
+            {authNeedsAction || clientErrors.length > 0 ? 'Action needed' : 'Ready'}
+          </span>
+        </div>
+        <div className="operator-grid text-xs">
+          <InfoRow label="Mode" value={runtimeModeLabel} tone={puterStatus.runtime.executionMode === 'live' ? 'success' : 'warning'} />
+          <InfoRow label="Auth" value={puterStatus.runtime.authState} tone={authNeedsAction ? 'warning' : 'neutral'} />
+          <InfoRow label="Provider" value={streaming?.providerId ?? routeDiagnostics?.resolvedProviderId ?? activeModelMetadata?.providerName ?? 'none'} />
+          <InfoRow label="Model" value={activeModel?.label ?? activeConversation?.modelId ?? 'none'} />
+          <InfoRow label="Stream" value={streamHealth} tone={streaming ? 'success' : 'neutral'} />
+          <InfoRow label="Recovery" value={puterStatus.runtime.lastRecoveryDecision ?? (routeDiagnostics?.usedFallback ? 'fallback used' : 'none')} tone={routeDiagnostics?.usedFallback ? 'warning' : 'neutral'} />
+        </div>
+        {(authNeedsAction || clientErrors.length > 0 || pendingAuthReplay) && (
+          <p className="mt-2 rounded-md border border-warning/20 bg-warning/10 px-2 py-1.5 text-[11px] leading-4 text-warning">
+            {authNeedsAction
+              ? pendingAuthReplay
+                ? 'Auth is required before the pending request can replay.'
+                : 'Runtime auth needs attention before live execution is fully available.'
+              : `${clientErrors.length} client error${clientErrors.length === 1 ? '' : 's'} captured.`}
+          </p>
+        )}
+      </div>
 
-      <div className="telemetry-card p-3">
+      <div className="diagnostics-priority-5">
+        <DeploymentStatus />
+      </div>
+
+      {activeModel && activeCapabilitySummary && (
+        <div className="telemetry-card diagnostic-card diagnostics-priority-4 p-3">
+          <h4 className="text-xs font-semibold text-text-primary uppercase tracking-wider mb-2 flex items-center gap-1.5">
+            <Zap size={12} className="text-accent" />
+            Model Capabilities
+          </h4>
+          <div className="space-y-1.5 text-xs">
+            <div className="flex justify-between gap-3">
+              <span className="text-text-muted">Active model</span>
+              <span className="max-w-[150px] truncate text-right text-text-secondary">{activeModel.label}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-text-muted">Context</span>
+              <span className="text-text-secondary">{formatCompactNumber(activeCapabilitySummary.maxContext)} tokens</span>
+            </div>
+            <div className="capability-chip-grid">
+              {activeCapabilitySummary.supported.slice(0, 8).map((capability) => (
+                <span key={capability} className="capability-chip">
+                  {RUNTIME_CAPABILITY_LABELS[capability]}
+                </span>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="telemetry-card diagnostic-card diagnostics-priority-5 p-3">
         <h4 className="text-xs font-semibold text-text-primary uppercase tracking-wider mb-2 flex items-center gap-1.5">
           <ShieldAlert size={12} className="text-accent" />
           Release Metadata
@@ -151,7 +221,7 @@ export function DiagnosticsTab() {
       </div>
 
       {routeDiagnostics && (
-        <div className="telemetry-card p-3">
+        <div className="telemetry-card diagnostic-card diagnostics-priority-3 p-3">
           <h4 className="text-xs font-semibold text-text-primary uppercase tracking-wider mb-2 flex items-center gap-1.5">
             <Activity size={12} className="text-accent" />
             Route Resolution
@@ -183,6 +253,18 @@ export function DiagnosticsTab() {
                 {routeDiagnostics.safeFallbackUsed ? 'safe' : routeDiagnostics.usedFallback ? 'yes' : 'no'}
               </span>
             </div>
+            {routeDiagnostics.requiredCapabilities.length > 0 && (
+              <div>
+                <span className="text-text-muted">Required capabilities</span>
+                <div className="capability-chip-grid mt-1">
+                  {routeDiagnostics.requiredCapabilities.map((capability) => (
+                    <span key={capability} className="capability-chip">
+                      {RUNTIME_CAPABILITY_LABELS[capability]}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
             <div>
               <span className="text-text-muted">Chain</span>
               <p className="mt-1 max-h-12 overflow-hidden text-[11px] leading-4 text-text-secondary">
@@ -193,15 +275,34 @@ export function DiagnosticsTab() {
               <div className="rounded-md border border-warning/25 bg-warning/10 px-2 py-1 text-[11px] text-warning">
                 {routeDiagnostics.rejections
                   .slice(-2)
-                  .map((item) => `${item.providerId ?? item.modelId}: ${item.reason}`)
+                  .map((item) => `${item.providerId ?? item.modelId}: ${item.reason}${
+                    item.missingCapabilities?.length
+                      ? ` (${item.missingCapabilities.map((capability) => RUNTIME_CAPABILITY_LABELS[capability]).join(', ')})`
+                      : ''
+                  }`)
                   .join(' | ')}
               </div>
+            )}
+            {routeDiagnostics.capabilityTrace.length > 0 && (
+              <details className="diagnostics-disclosure">
+                <summary>Capability routing trace</summary>
+                <div className="space-y-1 pt-2">
+                  {routeDiagnostics.capabilityTrace.slice(-4).map((event, index) => (
+                    <div key={`${event.type}-${event.modelId ?? 'request'}-${index}`} className="flex justify-between gap-2">
+                      <span className="text-text-muted">{event.type}</span>
+                      <span className="max-w-[130px] truncate text-right text-text-secondary">
+                        {event.modelId ?? event.capabilities.map((capability) => RUNTIME_CAPABILITY_LABELS[capability]).join(', ')}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </details>
             )}
           </div>
         </div>
       )}
 
-      <div className="telemetry-card p-3">
+      <div className="telemetry-card diagnostic-card diagnostics-priority-1 p-3">
         <h4 className="text-xs font-semibold text-text-primary uppercase tracking-wider mb-2 flex items-center gap-1.5">
           <ShieldAlert size={12} className="text-accent" />
           Puter Runtime
@@ -505,8 +606,10 @@ export function DiagnosticsTab() {
         </div>
       </div>
 
+      <ToolExecutionDiagnosticsCard toolRuntime={toolRuntime} toolIntent={toolIntent} />
+
       {streaming && (
-        <div className="telemetry-card p-3">
+        <div className="telemetry-card diagnostic-card diagnostics-priority-2 p-3">
           <h4 className="text-xs font-semibold text-text-primary uppercase tracking-wider mb-2 flex items-center gap-1.5">
             <Zap size={12} className="text-accent" />
             Active Stream
@@ -560,11 +663,22 @@ export function DiagnosticsTab() {
         </div>
       )}
 
-      <div className="telemetry-card p-3">
-        <h4 className="text-xs font-semibold text-text-primary uppercase tracking-wider mb-2 flex items-center gap-1.5">
-          <Activity size={12} className="text-accent" />
-          Runtime Telemetry
-        </h4>
+      <details
+        className="telemetry-card diagnostic-card diagnostics-disclosure-card diagnostics-priority-6 p-3"
+        open={expandedSections.includes('runtime-telemetry')}
+        onToggle={(event) => {
+          if ((event.target as HTMLDetailsElement).open !== expandedSections.includes('runtime-telemetry')) {
+            toggleDiagnosticsSection('runtime-telemetry');
+          }
+        }}
+      >
+        <summary className="diagnostics-card-summary">
+          <span className="flex items-center gap-1.5">
+            <Activity size={12} className="text-accent" />
+            Runtime Telemetry
+          </span>
+          <span>{runtimeTelemetry.streams.completed}/{runtimeTelemetry.streams.started} streams</span>
+        </summary>
         <div className="space-y-1.5 text-xs">
           <div className="flex justify-between">
             <span className="text-text-muted">Streams</span>
@@ -637,13 +751,24 @@ export function DiagnosticsTab() {
             <span className="text-text-secondary">{runtimeTelemetry.performance.providerFailureRate}</span>
           </div>
         </div>
-      </div>
+      </details>
 
-      <div className="telemetry-card p-3">
-        <h4 className="text-xs font-semibold text-text-primary uppercase tracking-wider mb-2 flex items-center gap-1.5">
-          <Clock size={12} className="text-accent" />
-          Runtime Timeline
-        </h4>
+      <details
+        className="telemetry-card diagnostic-card diagnostics-disclosure-card diagnostics-priority-7 p-3"
+        open={expandedSections.includes('runtime-timeline')}
+        onToggle={(event) => {
+          if ((event.target as HTMLDetailsElement).open !== expandedSections.includes('runtime-timeline')) {
+            toggleDiagnosticsSection('runtime-timeline');
+          }
+        }}
+      >
+        <summary className="diagnostics-card-summary">
+          <span className="flex items-center gap-1.5">
+            <Clock size={12} className="text-accent" />
+            Runtime Timeline
+          </span>
+          <span>{runtimeTelemetry.events.recent.length} events</span>
+        </summary>
         {runtimeTelemetry.events.recent.length === 0 ? (
           <p className="text-xs text-text-muted">No runtime events captured</p>
         ) : (
@@ -665,9 +790,9 @@ export function DiagnosticsTab() {
             ))}
           </div>
         )}
-      </div>
+      </details>
 
-      <div className="telemetry-card p-3">
+      <div className="telemetry-card diagnostic-card diagnostics-priority-4 p-3">
         <h4 className="text-xs font-semibold text-text-primary uppercase tracking-wider mb-2">
           Memory
         </h4>
@@ -678,11 +803,22 @@ export function DiagnosticsTab() {
         </p>
       </div>
 
-      <div className="telemetry-card p-3">
-        <h4 className="text-xs font-semibold text-text-primary uppercase tracking-wider mb-2 flex items-center gap-1.5">
-          <Activity size={12} className="text-success" />
-          Provider Health
-        </h4>
+      <details
+        className="telemetry-card diagnostic-card diagnostics-disclosure-card diagnostics-priority-7 p-3"
+        open={expandedSections.includes('provider-health')}
+        onToggle={(event) => {
+          if ((event.target as HTMLDetailsElement).open !== expandedSections.includes('provider-health')) {
+            toggleDiagnosticsSection('provider-health');
+          }
+        }}
+      >
+        <summary className="diagnostics-card-summary">
+          <span className="flex items-center gap-1.5">
+            <Activity size={12} className="text-success" />
+            Provider Health
+          </span>
+          <span>{providerIds.length} providers</span>
+        </summary>
         {providerIds.length === 0 ? (
           <p className="text-xs text-text-muted">No health data yet</p>
         ) : (
@@ -759,9 +895,9 @@ export function DiagnosticsTab() {
             })}
           </div>
         )}
-      </div>
+      </details>
 
-      <div className="telemetry-card p-3">
+      <div className="telemetry-card diagnostic-card diagnostics-priority-7 p-3">
         <div className="mb-2 flex items-center justify-between gap-2">
           <h4 className="text-xs font-semibold text-text-primary uppercase tracking-wider flex items-center gap-1.5">
             <AlertTriangle size={12} className={clientErrors.length > 0 ? 'text-warning' : 'text-text-muted'} />
@@ -808,7 +944,7 @@ export function DiagnosticsTab() {
       </div>
 
       {activeConversation && (
-        <div className="telemetry-card p-3">
+        <div className="telemetry-card diagnostic-card diagnostics-priority-4 p-3">
           <h4 className="text-xs font-semibold text-text-primary uppercase tracking-wider mb-2 flex items-center gap-1.5">
             <Clock size={12} className="text-accent" />
             Conversation
@@ -876,6 +1012,13 @@ function formatMs(value: number) {
   return `${Math.round(value)}ms`;
 }
 
+function formatCompactNumber(value: number) {
+  if (!value) return 'unknown';
+  if (value >= 1000000) return `${Math.round(value / 1000000)}M`;
+  if (value >= 1000) return `${Math.round(value / 1000)}K`;
+  return String(value);
+}
+
 function formatBuildTime(value: string) {
   if (!value || Number.isNaN(Date.parse(value))) return 'unknown';
   return new Intl.DateTimeFormat(undefined, {
@@ -893,6 +1036,106 @@ function formatTimestamp(value: number | null) {
     minute: '2-digit',
     second: '2-digit',
   }).format(value);
+}
+
+function ToolExecutionDiagnosticsCard({
+  toolRuntime,
+  toolIntent,
+}: {
+  toolRuntime: ToolExecutionSnapshot;
+  toolIntent: ToolExecutionIntent | null;
+}) {
+  return (
+    <div className="telemetry-card diagnostic-card diagnostics-priority-2 p-3">
+      <h4 className="text-xs font-semibold text-text-primary uppercase tracking-wider mb-2 flex items-center gap-1.5">
+        <Wrench size={12} className="text-accent" />
+        Tool Execution
+      </h4>
+      <div className="space-y-1.5 text-xs">
+        <div className="grid grid-cols-3 gap-1">
+          <MetricBadge
+            label="Active"
+            value={String(toolRuntime.activeCount)}
+            tone={toolRuntime.activeCount > 0 ? 'success' : 'neutral'}
+          />
+          <MetricBadge
+            label="Timeouts"
+            value={String(toolRuntime.timeoutCount)}
+            tone={toolRuntime.timeoutCount > 0 ? 'warning' : 'neutral'}
+          />
+          <MetricBadge
+            label="Blocked"
+            value={String(toolRuntime.duplicateSuppressionCount + toolRuntime.rejectedCount)}
+            tone={toolRuntime.rejectedCount > 0 ? 'warning' : 'neutral'}
+          />
+        </div>
+        {toolIntent && (
+          <div className="rounded-md border border-accent/15 bg-accent/10 px-2 py-1.5">
+            <div className="flex justify-between gap-3">
+              <span className="text-text-muted">Intent</span>
+              <span className={toolIntent.toolEligible ? 'text-success' : 'text-text-secondary'}>
+                {toolIntent.orchestrationMode}
+              </span>
+            </div>
+            <div className="flex justify-between gap-3">
+              <span className="text-text-muted">Tool</span>
+              <span className="max-w-[150px] truncate text-right text-text-secondary">
+                {toolIntent.toolId ?? 'none'}
+              </span>
+            </div>
+            {toolIntent.reasons.length > 0 && (
+              <p className="mt-1 text-[11px] leading-4 text-text-muted">
+                {toolIntent.reasons.slice(0, 2).join(' | ')}
+              </p>
+            )}
+          </div>
+        )}
+        {toolRuntime.activeExecutions.length > 0 && (
+          <div className="space-y-1">
+            {toolRuntime.activeExecutions.slice(0, 3).map((execution) => (
+              <div key={execution.executionId} className="tool-execution-row">
+                <span className="max-w-[130px] truncate font-mono text-text-secondary">{execution.toolId}</span>
+                <span className="text-success">{execution.state}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        {toolRuntime.recentExecutions.length > 0 && (
+          <details className="diagnostics-disclosure">
+            <summary>Recent tool trace</summary>
+            <div className="space-y-1 pt-2">
+              {toolRuntime.recentExecutions.slice(0, 5).map((execution) => (
+                <div key={execution.executionId} className="tool-execution-row">
+                  <span className="max-w-[120px] truncate text-text-secondary">{execution.toolId}</span>
+                  <span className={execution.state === 'completed' ? 'text-success' : execution.state === 'rejected' ? 'text-warning' : 'text-text-secondary'}>
+                    {execution.state}
+                  </span>
+                  <span className="text-text-muted">{execution.latencyMs ?? 0}ms</span>
+                </div>
+              ))}
+            </div>
+          </details>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function InfoRow({
+  label,
+  value,
+  tone = 'neutral',
+}: {
+  label: string;
+  value: string;
+  tone?: 'success' | 'warning' | 'neutral';
+}) {
+  return (
+    <div className={`operator-row ${tone}`}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
 }
 
 function MetricBadge({

@@ -98,4 +98,30 @@ test.describe('mobile layout and interaction stability', () => {
     await expectWithinViewport(page.locator('.terminal-input-row'), 'terminal input row');
     await expectNoHorizontalDocumentOverflow(page);
   });
+
+  test('mobile diagnostics panel keeps operator summary readable', async ({ page }) => {
+    await page.keyboard.down('Control');
+    await page.keyboard.down('Shift');
+    await page.keyboard.press('D');
+    await page.keyboard.up('Shift');
+    await page.keyboard.up('Control');
+
+    const panel = page.locator('.utility-panel-shell');
+    await expect(page.getByText('Operator Summary')).toBeVisible();
+    await expect(page.getByText('Tool Execution')).toBeVisible();
+    await expectWithinViewport(panel, 'mobile diagnostics panel');
+    await expectNoHorizontalDocumentOverflow(page);
+  });
+
+  test('mobile reload preserves lightweight workspace continuity', async ({ page }) => {
+    await page.getByLabel('Image workspace').tap();
+    await page.getByLabel('Image prompt').fill('mobile continuity prompt');
+    await page.getByLabel('Chat workspace').tap();
+    await page.reload();
+
+    await expect(page.getByRole('button', { name: 'Dismiss session restored notice' })).toBeVisible();
+    await page.getByLabel('Image workspace').tap();
+    await expect(page.getByLabel('Image prompt')).toHaveValue('mobile continuity prompt');
+    await expectNoHorizontalDocumentOverflow(page);
+  });
 });

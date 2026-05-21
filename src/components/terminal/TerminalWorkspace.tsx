@@ -1,17 +1,27 @@
 import { useState } from 'react';
 import { CheckCircle2, CornerDownLeft, Terminal as TerminalIcon } from 'lucide-react';
 import { terminalAdapter, type TerminalEntry } from '@/lib/terminal';
+import { useWorkstationStore } from '@/store/workstationStore';
 
 export function TerminalWorkspace() {
-  const [input, setInput] = useState('');
+  const savedState = useWorkstationStore((s) => s.terminalWorkspace);
+  const updateTerminalWorkspace = useWorkstationStore((s) => s.updateTerminalWorkspace);
+  const recordCommand = useWorkstationStore((s) => s.recordCommand);
+  const [input, setInput] = useState(savedState.input);
   const [history, setHistory] = useState<TerminalEntry[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
-  const [height, setHeight] = useState(420);
+  const [height, setHeight] = useState(savedState.height);
 
   const execute = async () => {
     const entry = await terminalAdapter.execute(input);
+    const previousCommands = useWorkstationStore.getState().terminalWorkspace.commandHistory;
     setHistory((prev) => [entry, ...prev].slice(0, 20));
     setInput('');
+    updateTerminalWorkspace({
+      input: '',
+      commandHistory: [input, ...previousCommands].filter(Boolean).slice(0, 20),
+    });
+    recordCommand({ kind: 'command', label: input, value: input, workspace: 'terminal' });
     setHistoryIndex(-1);
   };
 
@@ -37,7 +47,10 @@ export function TerminalWorkspace() {
           <TerminalIcon size={18} />
           <input
             value={input}
-            onChange={(event) => setInput(event.target.value)}
+            onChange={(event) => {
+              setInput(event.target.value);
+              updateTerminalWorkspace({ input: event.target.value });
+            }}
             onKeyDown={(event) => {
               if (event.key === 'Enter') execute();
               if (event.key === 'ArrowUp') {
@@ -85,7 +98,11 @@ export function TerminalWorkspace() {
             max="680"
             step="20"
             value={height}
-            onChange={(event) => setHeight(Number(event.target.value))}
+            onChange={(event) => {
+              const next = Number(event.target.value);
+              setHeight(next);
+              updateTerminalWorkspace({ height: next });
+            }}
           />
         </label>
       </div>

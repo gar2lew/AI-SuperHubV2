@@ -31,6 +31,7 @@ import { getChunkSequence, StreamEngine } from '@/lib/streaming/stream-engine';
 import { recordSuccess, recordFailure } from '@/lib/providers/health';
 import { recordProviderStreamInterruption } from '@/lib/providers/analytics';
 import { formatProviderError } from '@/lib/providers/errors';
+import { WORKSTATION_SCHEMA_VERSION } from '@/lib/persistence/governance';
 
 export interface DraftAttachmentMetadata {
   name: string;
@@ -3070,6 +3071,8 @@ export const useChatStore = create<ChatState>()(
     }),
     {
       name: 'ai-workstation-chat',
+      version: WORKSTATION_SCHEMA_VERSION,
+      migrate: (persisted) => sanitizeHydratedChatState(persisted as HydratedChatStateInput) as never,
       merge: (persisted, current) => ({
         ...current,
         ...sanitizeHydratedChatState(persisted as Partial<ChatState>),
@@ -3087,12 +3090,12 @@ export const useChatStore = create<ChatState>()(
         })),
         activeConversationId: state.activeConversationId,
         drafts: state.drafts,
-        activeStream: state.activeStream,
-        lastStream: state.lastStream,
-        activeExecutionId: state.activeExecutionId,
-        executionsById: state.executionsById,
-        pipelinesById: state.pipelinesById,
-        contextFramesById: state.contextFramesById,
+        activeStream: null,
+        lastStream: state.lastStream?.lifecycle === 'completed' ? state.lastStream : null,
+        activeExecutionId: null,
+        executionsById: {},
+        pipelinesById: {},
+        contextFramesById: {},
         pendingAuthReplay: state.pendingAuthReplay && state.pendingAuthReplay.status !== 'succeeded'
           ? {
               ...state.pendingAuthReplay,

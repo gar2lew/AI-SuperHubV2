@@ -1,5 +1,4 @@
-import { lazy, Suspense, useState } from 'react';
-import { motion } from 'framer-motion';
+import { lazy, memo, Suspense } from 'react';
 import {
   X,
   FileText,
@@ -39,10 +38,11 @@ const DiagnosticsTab = lazy(() =>
 
 export function RightPanel() {
   const toggleRightPanel = useSettingsStore((s) => s.toggleRightPanel);
-  const [activeTab, setActiveTab] = useState<RightPanelTab>('files');
+  const activeTab = useSettingsStore((s) => s.lastUtilityTab);
+  const setActiveTab = useSettingsStore((s) => s.setLastUtilityTab);
 
   return (
-    <div className="utility-panel flex flex-col h-full w-full sm:w-[21rem]">
+    <div className="utility-panel flex h-full w-full flex-col">
       <div className="panel-header flex items-center justify-between px-4 py-3">
         <h3 className="text-base font-semibold text-text-primary">Utilities</h3>
         <button
@@ -54,26 +54,27 @@ export function RightPanel() {
         </button>
       </div>
 
-      <div className="panel-tabs flex">
+      <div className="panel-tabs utility-tabs flex" role="tablist" aria-label="Utility panel tabs">
         {TABS.map((tab) => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
             aria-label={`${tab.label} tab`}
+            role="tab"
             aria-selected={activeTab === tab.id}
-            className={`panel-tab flex-1 flex items-center justify-center gap-1.5 py-2.5 text-[0.8rem] font-medium ${
+            className={`panel-tab flex min-w-0 flex-1 items-center justify-center gap-1.5 px-1 py-2.5 text-[0.78rem] font-medium ${
               activeTab === tab.id
                 ? 'is-active text-accent'
                 : 'text-text-muted'
             }`}
           >
             <tab.icon size={14} />
-            <span className="sr-only">{tab.label}</span>
+            <span className="hidden min-w-0 truncate xl:inline">{tab.label}</span>
           </button>
         ))}
       </div>
 
-      <div className="flex-1 overflow-y-auto p-3.5 sm:p-4">
+      <div className="utility-panel-content flex-1 overflow-y-auto p-3.5 sm:p-4">
         {activeTab === 'files' && <FilesTab />}
         {activeTab === 'uploads' && <UploadsTab />}
         {activeTab === 'tools' && <ToolsTab />}
@@ -127,24 +128,31 @@ function UploadsTab() {
   );
 }
 
-function ToolsTab() {
+const ToolsTab = memo(function ToolsTab() {
   const tools = toolRegistry.getAll();
   return (
     <div className="space-y-2">
       {tools.map((tool) => (
-        <motion.div
+        <div
           key={tool.id}
-          whileHover={{ scale: 1.01 }}
-          className="telemetry-card p-3 cursor-pointer"
+          className="telemetry-card tool-card p-3"
         >
-          <p className="text-sm font-medium text-text-primary">{tool.name}</p>
+          <div className="flex items-start justify-between gap-2">
+            <p className="text-sm font-medium text-text-primary">{tool.name}</p>
+            <span className="capability-chip">{tool.category}</span>
+          </div>
           <p className="text-xs text-text-muted mt-0.5">{tool.description}</p>
           <p className="text-xs text-accent mt-1 font-mono">{tool.id}</p>
-        </motion.div>
+          <div className="capability-chip-grid mt-2">
+            {tool.capabilities.slice(0, 3).map((capability) => (
+              <span key={capability} className="capability-chip">{capability}</span>
+            ))}
+          </div>
+        </div>
       ))}
     </div>
   );
-}
+});
 
 function ArtifactsTab() {
   return (

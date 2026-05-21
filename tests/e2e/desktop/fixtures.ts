@@ -158,6 +158,9 @@ export async function openDesktopApp(
   } = {}
 ) {
   await page.addInitScript((seed) => {
+    if (sessionStorage.getItem('ai-superhub-desktop-seeded') === 'true') return;
+    sessionStorage.setItem('ai-superhub-desktop-seeded', 'true');
+
     localStorage.clear();
     localStorage.setItem(
       'ai-workstation-settings',

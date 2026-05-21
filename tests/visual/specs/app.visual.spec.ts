@@ -39,7 +39,7 @@ test('diagnostics panel baseline @desktop', async ({ page }) => {
     settings: persistedSettings({ rightPanelOpen: true }),
   });
 
-  await page.getByRole('button', { name: 'Diagnostics tab' }).click();
+  await page.getByRole('tab', { name: 'Diagnostics tab' }).click();
   await expect(page.getByText('Puter Runtime')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Conversation' })).toBeVisible();
 

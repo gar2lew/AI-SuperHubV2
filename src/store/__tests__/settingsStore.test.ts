@@ -26,6 +26,9 @@ function resetSettingsStore() {
     commandPaletteOpen: false,
     searchOpen: false,
     activeWorkspace: 'chat',
+    lastUtilityTab: 'files',
+    rightPanelWidth: 336,
+    recentWorkspaces: ['chat'],
   });
 }
 
@@ -41,12 +44,18 @@ describe('settingsStore', () => {
         selectedModel: 'missing-model',
         selectedPreset: 'missing-preset',
         activeWorkspace: 'missing-workspace' as never,
+        lastUtilityTab: 'missing-tab' as never,
+        rightPanelWidth: 900,
+        recentWorkspaces: ['image', 'missing-workspace'] as never,
       })
     ).toMatchObject({
       selectedProvider: 'puter',
       selectedModel: 'puter-claude-sonnet-4',
       selectedPreset: 'smart',
       activeWorkspace: 'chat',
+      lastUtilityTab: 'files',
+      rightPanelWidth: 420,
+      recentWorkspaces: ['chat', 'image'],
     });
   });
 
@@ -63,6 +72,23 @@ describe('settingsStore', () => {
       selectedModel: 'qwen/qwen3-coder',
       selectedPreset: 'other-models',
       activeWorkspace: 'chat',
+    });
+  });
+
+  it('persists workstation continuity without duplicating recent workspaces', () => {
+    const state = useSettingsStore.getState();
+
+    state.setActiveWorkspace('coding');
+    useSettingsStore.getState().setActiveWorkspace('image');
+    useSettingsStore.getState().setActiveWorkspace('coding');
+    useSettingsStore.getState().setLastUtilityTab('diagnostics');
+    useSettingsStore.getState().setRightPanelWidth(301.8);
+
+    expect(useSettingsStore.getState()).toMatchObject({
+      activeWorkspace: 'coding',
+      lastUtilityTab: 'diagnostics',
+      rightPanelWidth: 302,
+      recentWorkspaces: ['coding', 'image', 'chat'],
     });
   });
 });

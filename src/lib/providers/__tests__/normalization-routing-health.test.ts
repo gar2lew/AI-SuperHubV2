@@ -329,6 +329,69 @@ describe("provider routing and diagnostics state", () => {
     );
   });
 
+  it("rejects models missing required realtime web capability and explains the fallback", () => {
+    const route = resolveRoute("ollama-llama-maverick", {
+      respectHealth: false,
+      requiredCapabilities: ["realtimeWeb"],
+    });
+
+    expect(route).toMatchObject({
+      modelId: "puter-gpt-5",
+      usedFallback: true,
+    });
+    expect(getLastRoutingDiagnostics()).toMatchObject({
+      requestedModelId: "ollama-llama-maverick",
+      resolvedModelId: "puter-gpt-5",
+      orchestrationMode: "capability-routed",
+    });
+    expect(getLastRoutingDiagnostics()?.rejections).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          modelId: "ollama-llama-maverick",
+          reason: "capability-missing",
+          missingCapabilities: ["realtimeWeb"],
+        }),
+      ])
+    );
+    expect(getLastRoutingDiagnostics()?.capabilityTrace.map((event) => event.type)).toEqual(
+      expect.arrayContaining(["capability-required", "capability-missing", "capability-satisfied"])
+    );
+  });
+
+  it("keeps image-generation routing out of text-only models", () => {
+    const route = resolveRoute("puter-gpt-5", {
+      respectHealth: false,
+      requiredCapabilities: ["imageGeneration"],
+    });
+
+    expect(route).toMatchObject({
+      modelId: "gpt-image-1-mini",
+      usedFallback: true,
+    });
+    expect(getLastRoutingDiagnostics()?.rejections).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          modelId: "puter-gpt-5",
+          reason: "capability-missing",
+          missingCapabilities: ["imageGeneration"],
+        }),
+      ])
+    );
+  });
+
+  it("maps explicit routing capability flags into deterministic capability requirements", () => {
+    const route = resolveRoute("puter-gpt-5", {
+      respectHealth: false,
+      requiresImageGeneration: true,
+    });
+
+    expect(route).toMatchObject({
+      modelId: "gpt-image-1-mini",
+      usedFallback: true,
+    });
+    expect(getLastRoutingDiagnostics()?.requiredCapabilities).toEqual(["imageGeneration"]);
+  });
+
   it("respects provider health cooldowns and recovers after reset", () => {
     recordFailure("ollama");
 

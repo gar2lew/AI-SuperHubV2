@@ -1,5 +1,6 @@
 import { lazy, Suspense, useMemo, useState } from 'react';
 import { Check, Copy, Download, FileCode2, Play, WrapText } from 'lucide-react';
+import { useWorkstationStore } from '@/store/workstationStore';
 
 interface CodeArtifact {
   id: string;
@@ -20,11 +21,13 @@ const LazyCodeViewport = lazy(() =>
 );
 
 export function CodingWorkspace() {
+  const savedState = useWorkstationStore((s) => s.codingWorkspace);
+  const updateCodingWorkspace = useWorkstationStore((s) => s.updateCodingWorkspace);
   const [artifacts, setArtifacts] = useState<CodeArtifact[]>([SAMPLE]);
-  const [selectedId, setSelectedId] = useState(SAMPLE.id);
+  const [selectedId, setSelectedId] = useState(savedState.selectedArtifactId ?? SAMPLE.id);
   const [status, setStatus] = useState('Sandbox idle');
   const [copied, setCopied] = useState(false);
-  const [wrap, setWrap] = useState(false);
+  const [wrap, setWrap] = useState(savedState.wrap);
   const selected = useMemo(
     () => artifacts.find((artifact) => artifact.id === selectedId) || artifacts[0],
     [artifacts, selectedId]
@@ -39,6 +42,7 @@ export function CodingWorkspace() {
     };
     setArtifacts((prev) => [artifact, ...prev]);
     setSelectedId(artifact.id);
+    updateCodingWorkspace({ selectedArtifactId: artifact.id });
   };
 
   const copy = async () => {
@@ -68,7 +72,10 @@ export function CodingWorkspace() {
           {artifacts.map((artifact) => (
             <button
               key={artifact.id}
-              onClick={() => setSelectedId(artifact.id)}
+              onClick={() => {
+                setSelectedId(artifact.id);
+                updateCodingWorkspace({ selectedArtifactId: artifact.id });
+              }}
               className={artifact.id === selected.id ? 'is-active' : ''}
               aria-current={artifact.id === selected.id}
             >
@@ -82,7 +89,17 @@ export function CodingWorkspace() {
           <div className="code-toolbar">
             <span>{selected.name}</span>
             <div>
-              <button onClick={() => setWrap((value) => !value)} title="Toggle line wrapping" aria-label="Toggle line wrapping" className={wrap ? 'is-active' : ''}>
+              <button
+                onClick={() => {
+                  setWrap((value) => {
+                    updateCodingWorkspace({ wrap: !value });
+                    return !value;
+                  });
+                }}
+                title="Toggle line wrapping"
+                aria-label="Toggle line wrapping"
+                className={wrap ? 'is-active' : ''}
+              >
                 <WrapText size={15} />
               </button>
               <button onClick={copy} title="Copy code" aria-label="Copy code">

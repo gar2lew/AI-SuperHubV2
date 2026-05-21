@@ -93,6 +93,8 @@ export async function seedWorkspace(page: Page, options: SeedOptions = {}) {
   const messages = options.messages ?? defaultMessages;
   await page.addInitScript(
     ({ workspace, messages }) => {
+      if (sessionStorage.getItem('ai-superhub-mobile-seeded') === 'true') return;
+      sessionStorage.setItem('ai-superhub-mobile-seeded', 'true');
       const now = Date.now();
       const conversationId = 'e2e-mobile-conversation';
       const conversation = {

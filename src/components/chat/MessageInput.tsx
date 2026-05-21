@@ -4,6 +4,7 @@ import { Send, Square, Paperclip, Image, FileText } from 'lucide-react';
 import { useChatStore } from '@/store/chatStore';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useWorkspaceStore } from '@/store/workspaceStore';
+import { useWorkstationStore } from '@/store/workstationStore';
 import type { ProviderId } from '@/types';
 
 import { textContent } from '@/lib/utils';
@@ -55,6 +56,7 @@ export function MessageInput() {
   const selectedProvider = useSettingsStore((s) => s.selectedProvider);
   const selectedModel = useSettingsStore((s) => s.selectedModel);
   const workspaceContext = useWorkspaceStore((s) => s.getInjectableContext());
+  const recordPrompt = useWorkstationStore((s) => s.recordPrompt);
 
   useEffect(() => {
     const draft = activeConversation ? useChatStore.getState().drafts[activeConversation.id] : undefined;
@@ -93,8 +95,30 @@ export function MessageInput() {
     };
 
     window.addEventListener('ai-superhub:retry-chat', handleRetry);
-    return () => window.removeEventListener('ai-superhub:retry-chat', handleRetry);
-  }, []);
+    const handleRecallPrompt = (event: Event) => {
+      const detail = (event as CustomEvent<{ prompt?: string }>).detail;
+      if (!detail?.prompt || useChatStore.getState().isStreaming) return;
+      setRetryOverride(null);
+      setInput(detail.prompt);
+      if (activeConversation) {
+        setDraft(activeConversation.id, {
+          text: detail.prompt,
+          attachments: attachments.map((attachment) => ({
+            name: attachment.name,
+            mimeType: attachment.type,
+            size: attachment.size,
+            lastModified: attachment.lastModified,
+          })),
+        });
+      }
+      requestAnimationFrame(() => textareaRef.current?.focus());
+    };
+    window.addEventListener('ai-superhub:recall-prompt', handleRecallPrompt);
+    return () => {
+      window.removeEventListener('ai-superhub:retry-chat', handleRetry);
+      window.removeEventListener('ai-superhub:recall-prompt', handleRecallPrompt);
+    };
+  }, [activeConversation, attachments, setDraft]);
 
   useEffect(() => {
     const handleAuthReplayReady = async () => {
@@ -160,6 +184,7 @@ export function MessageInput() {
     setInput('');
     setRetryOverride(null);
     clearDraft(activeConversation.id);
+    recordPrompt(userText, 'chat');
 
     // Build content parts from text + attachments
     const contentParts = textContent(userText);

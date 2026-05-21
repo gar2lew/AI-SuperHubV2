@@ -2,6 +2,11 @@ import type { AIProvider } from '@/lib/providers/base';
 import { getProvider } from '@/lib/providers';
 import { modelRegistry } from '@/lib/models/registry';
 import { isHealthy } from '@/lib/providers/health';
+import {
+  getMissingCapabilities,
+  resolveCapabilityFallbacks,
+  type RuntimeCapability,
+} from '@/lib/models/capability-matrix';
 
 const SAFE_FALLBACK_MODEL_ID = 'ollama-llama-maverick';
 
@@ -24,7 +29,20 @@ export interface RouteRejection {
     | 'provider-unhealthy'
     | 'runtime-id-missing'
     | 'runtime-id-malformed'
-    | 'provider-mismatch';
+    | 'provider-mismatch'
+    | 'capability-missing';
+  missingCapabilities?: RuntimeCapability[];
+}
+
+export interface CapabilityRoutingTraceEvent {
+  type:
+    | 'capability-required'
+    | 'capability-missing'
+    | 'capability-fallback'
+    | 'capability-satisfied';
+  modelId?: string;
+  providerId?: string;
+  capabilities: RuntimeCapability[];
 }
 
 export interface RoutingDiagnostics {
@@ -37,6 +55,9 @@ export interface RoutingDiagnostics {
   usedFallback: boolean;
   safeFallbackUsed: boolean;
   rejections: RouteRejection[];
+  requiredCapabilities: RuntimeCapability[];
+  capabilityTrace: CapabilityRoutingTraceEvent[];
+  orchestrationMode?: 'standard' | 'capability-routed';
 }
 
 export interface RoutingOptions {
@@ -45,6 +66,15 @@ export interface RoutingOptions {
   allowFallback?: boolean;
   maxRetries?: number;
   respectHealth?: boolean;
+  requiredCapabilities?: RuntimeCapability[];
+  requiresWebAccess?: boolean;
+  requiresVision?: boolean;
+  requiresStreaming?: boolean;
+  requiresReasoning?: boolean;
+  requiresToolExecution?: boolean;
+  requiresImageGeneration?: boolean;
+  requiresVoice?: boolean;
+  orchestrationMode?: 'standard-chat' | 'web-query' | 'media-generation' | 'voice' | 'tool-eligible';
 }
 
 const DEFAULT_OPTIONS: RoutingOptions = {
@@ -61,6 +91,26 @@ export function getLastRoutingDiagnostics(): RoutingDiagnostics | null {
 
 function withSafeFallback(chain: string[]): string[] {
   return chain.includes(SAFE_FALLBACK_MODEL_ID) ? chain : [...chain, SAFE_FALLBACK_MODEL_ID];
+}
+
+function withCapabilityFallbacks(chain: string[], requiredCapabilities: RuntimeCapability[]): string[] {
+  if (requiredCapabilities.length === 0) return chain;
+  const capabilityFallbacks = resolveCapabilityFallbacks(chain[0] ?? SAFE_FALLBACK_MODEL_ID, requiredCapabilities)
+    .map((profile) => profile.modelId);
+  return Array.from(new Set([...chain, ...capabilityFallbacks]));
+}
+
+function capabilitiesFromOptions(options: RoutingOptions): RuntimeCapability[] {
+  return Array.from(new Set([
+    ...(options.requiredCapabilities ?? []),
+    ...(options.requiresWebAccess ? ['realtimeWeb' as const] : []),
+    ...(options.requiresVision ? ['vision' as const] : []),
+    ...(options.requiresStreaming ? ['streaming' as const] : []),
+    ...(options.requiresReasoning ? ['reasoning' as const] : []),
+    ...(options.requiresToolExecution ? ['tools' as const] : []),
+    ...(options.requiresImageGeneration ? ['imageGeneration' as const] : []),
+    ...(options.requiresVoice ? ['speechToText' as const, 'textToSpeech' as const] : []),
+  ]));
 }
 
 function rejectionForProvider(modelId: string, providerId: string): RouteRejection | null {
@@ -93,10 +143,12 @@ export function resolveRoute(
   options: RoutingOptions = {}
 ): RoutingResult | null {
   const opts = { ...DEFAULT_OPTIONS, ...options };
+  const requiredCapabilities = capabilitiesFromOptions(opts);
 
   // Build fallback chain
   const baseChain = modelRegistry.resolveFallbackChain(modelId);
-  const chain = opts.allowFallback ? withSafeFallback(baseChain) : baseChain;
+  const capabilityChain = withCapabilityFallbacks(baseChain, requiredCapabilities);
+  const chain = opts.allowFallback ? withSafeFallback(capabilityChain) : capabilityChain;
   const diagnostics: RoutingDiagnostics = {
     requestedModelId: modelId,
     preferredProvider: opts.preferredProvider,
@@ -104,6 +156,13 @@ export function resolveRoute(
     usedFallback: false,
     safeFallbackUsed: false,
     rejections: [],
+    requiredCapabilities,
+    capabilityTrace: requiredCapabilities.length > 0
+      ? [{ type: 'capability-required', modelId, capabilities: requiredCapabilities }]
+      : [],
+    orchestrationMode: opts.orchestrationMode === 'standard-chat'
+      ? 'standard'
+      : requiredCapabilities.length > 0 ? 'capability-routed' : 'standard',
   };
 
   if (baseChain.length === 0) {
@@ -123,6 +182,23 @@ export function resolveRoute(
       opts.preferredProvider && opts.preferredProvider === model.provider
         ? opts.preferredProvider
         : model.provider;
+    const missingCapabilities = getMissingCapabilities(model, requiredCapabilities);
+    if (missingCapabilities.length > 0) {
+      diagnostics.rejections.push({
+        modelId: id,
+        providerId,
+        reason: 'capability-missing',
+        missingCapabilities,
+      });
+      diagnostics.capabilityTrace.push({
+        type: 'capability-missing',
+        modelId: id,
+        providerId,
+        capabilities: missingCapabilities,
+      });
+      if (!opts.allowFallback) break;
+      continue;
+    }
     const provider = getProvider(providerId);
     const providerRejection = rejectionForProvider(id, providerId);
     const runtimeResolution = modelRegistry.resolveRuntimeModelId(id, providerId);
@@ -145,6 +221,22 @@ export function resolveRoute(
         usedFallback: id !== modelId || usedProviderFallback,
         fallbackChain: id === SAFE_FALLBACK_MODEL_ID ? chain : baseChain,
       };
+      if (requiredCapabilities.length > 0) {
+        diagnostics.capabilityTrace.push({
+          type: id !== modelId ? 'capability-fallback' : 'capability-satisfied',
+          modelId: id,
+          providerId: provider.id,
+          capabilities: requiredCapabilities,
+        });
+        if (id !== modelId) {
+          diagnostics.capabilityTrace.push({
+            type: 'capability-satisfied',
+            modelId: id,
+            providerId: provider.id,
+            capabilities: requiredCapabilities,
+          });
+        }
+      }
       commitDiagnostics(diagnostics, route);
       return route;
     }
@@ -196,11 +288,13 @@ export function resolveRoute(
   const safeProvider = safeModel ? getProvider(safeModel.provider) : undefined;
   const safeRejection = safeModel ? rejectionForProvider(SAFE_FALLBACK_MODEL_ID, safeModel.provider) : null;
   const safeRuntimeResolution = modelRegistry.resolveRuntimeModelId(SAFE_FALLBACK_MODEL_ID, safeModel?.provider);
+  const safeMissingCapabilities = getMissingCapabilities(safeModel, requiredCapabilities);
   if (
     opts.allowFallback &&
     safeModel &&
     safeProvider &&
     !safeRejection &&
+    safeMissingCapabilities.length === 0 &&
     safeRuntimeResolution.valid &&
     safeRuntimeResolution.runtimeId
   ) {
@@ -213,6 +307,14 @@ export function resolveRoute(
     };
     commitDiagnostics({ ...diagnostics, safeFallbackUsed: true }, route);
     return route;
+  }
+  if (safeModel && safeMissingCapabilities.length > 0) {
+    diagnostics.rejections.push({
+      modelId: SAFE_FALLBACK_MODEL_ID,
+      providerId: safeModel.provider,
+      reason: 'capability-missing',
+      missingCapabilities: safeMissingCapabilities,
+    });
   }
   if (safeRejection) diagnostics.rejections.push(safeRejection);
   if (!safeRuntimeResolution.valid) {

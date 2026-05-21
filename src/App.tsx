@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { useChatStore } from '@/store/chatStore';
 import { useSettingsStore } from '@/store/settingsStore';
+import { useWorkstationStore } from '@/store/workstationStore';
 import { recordHydrationComplete } from '@/lib/telemetry/runtimeTelemetry';
 import { beginPuterRuntimeBootstrap } from '@/lib/providers/puter/runtime';
 
@@ -12,10 +13,20 @@ function KeyboardShortcuts() {
   const openCommandPalette = useSettingsStore((s) => s.openCommandPalette);
   const openSearch = useSettingsStore((s) => s.openSearch);
   const setActiveWorkspace = useSettingsStore((s) => s.setActiveWorkspace);
+  const setLastUtilityTab = useSettingsStore((s) => s.setLastUtilityTab);
+  const setRightPanelOpen = useSettingsStore((s) => s.setRightPanelOpen);
   const createConversation = useChatStore((s) => s.createConversation);
+  const stopStreaming = useChatStore((s) => s.stopStreaming);
+  const recordCommand = useWorkstationStore((s) => s.recordCommand);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const isTypingTarget =
+        target?.tagName === 'INPUT' ||
+        target?.tagName === 'TEXTAREA' ||
+        target?.isContentEditable;
+
       // Command palette: Ctrl+K or Cmd+K
       if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
         e.preventDefault();
@@ -40,10 +51,35 @@ function KeyboardShortcuts() {
 
       // Search: /
       if (e.key === '/' && !e.ctrlKey && !e.metaKey && !e.altKey) {
-        const target = e.target as HTMLElement;
-        if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
+        if (isTypingTarget) return;
         e.preventDefault();
         openSearch();
+        return;
+      }
+
+      if (e.key === 'Escape' && useChatStore.getState().isStreaming && !isTypingTarget) {
+        e.preventDefault();
+        stopStreaming();
+        return;
+      }
+
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'd') {
+        e.preventDefault();
+        setLastUtilityTab('diagnostics');
+        setRightPanelOpen(!useSettingsStore.getState().rightPanelOpen);
+        return;
+      }
+
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && /^[1-5]$/.test(e.key)) {
+        e.preventDefault();
+        const workspace = (['chat', 'coding', 'image', 'voice', 'terminal'] as const)[Number(e.key) - 1];
+        setActiveWorkspace(workspace);
+        recordCommand({
+          kind: 'workspace',
+          label: `Switch to ${workspace}`,
+          value: workspace,
+          workspace,
+        });
         return;
       }
 
@@ -67,11 +103,15 @@ function KeyboardShortcuts() {
   }, [
     toggleSidebar,
     toggleRightPanel,
+    setRightPanelOpen,
     openSettings,
     openCommandPalette,
     openSearch,
+    setLastUtilityTab,
     setActiveWorkspace,
     createConversation,
+    stopStreaming,
+    recordCommand,
   ]);
 
   return null;
