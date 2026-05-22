@@ -1,5 +1,7 @@
 import { lazy, Suspense, useMemo, useState } from 'react';
-import { Check, Copy, Download, FileCode2, Play, WrapText } from 'lucide-react';
+import { Check, Copy, Download, FileCode2, MessageSquare, Play, TerminalSquare, WrapText } from 'lucide-react';
+import { useChatStore } from '@/store/chatStore';
+import { useSettingsStore } from '@/store/settingsStore';
 import { useWorkstationStore } from '@/store/workstationStore';
 
 interface CodeArtifact {
@@ -22,15 +24,43 @@ const LazyCodeViewport = lazy(() =>
 
 export function CodingWorkspace() {
   const savedState = useWorkstationStore((s) => s.codingWorkspace);
+  const workflowContexts = useWorkstationStore((s) => s.workflowContexts);
   const updateCodingWorkspace = useWorkstationStore((s) => s.updateCodingWorkspace);
+  const updateTerminalWorkspace = useWorkstationStore((s) => s.updateTerminalWorkspace);
+  const addWorkflowContext = useWorkstationStore((s) => s.addWorkflowContext);
+  const setActiveWorkspace = useSettingsStore((s) => s.setActiveWorkspace);
+  const activeConversationId = useChatStore((s) => s.activeConversationId);
+  const createConversation = useChatStore((s) => s.createConversation);
   const [artifacts, setArtifacts] = useState<CodeArtifact[]>([SAMPLE]);
   const [selectedId, setSelectedId] = useState(savedState.selectedArtifactId ?? SAMPLE.id);
   const [status, setStatus] = useState('Sandbox idle');
   const [copied, setCopied] = useState(false);
   const [wrap, setWrap] = useState(savedState.wrap);
+  const workflowArtifacts = useMemo<CodeArtifact[]>(
+    () => workflowContexts
+      .filter((context) => context.type === 'code' && context.payload.code)
+      .map((context) => ({
+        id: context.id,
+        name: context.title.endsWith(`.${context.payload.language}`) ? context.title : `${context.title}.${context.payload.language || 'txt'}`,
+        language: context.payload.language || 'text',
+        code: context.payload.code || '',
+      })),
+    [workflowContexts]
+  );
+  const allArtifacts = useMemo(
+    () => {
+      const seen = new Set<string>();
+      return [...workflowArtifacts, ...artifacts].filter((artifact) => {
+        if (seen.has(artifact.id)) return false;
+        seen.add(artifact.id);
+        return true;
+      });
+    },
+    [artifacts, workflowArtifacts]
+  );
   const selected = useMemo(
-    () => artifacts.find((artifact) => artifact.id === selectedId) || artifacts[0],
-    [artifacts, selectedId]
+    () => allArtifacts.find((artifact) => artifact.id === selectedId) || allArtifacts[0],
+    [allArtifacts, selectedId]
   );
 
   const createArtifact = () => {
@@ -52,6 +82,39 @@ export function CodingWorkspace() {
     setTimeout(() => setCopied(false), 1600);
   };
 
+  const sendSnippetToChat = () => {
+    addWorkflowContext({
+      type: 'code',
+      title: selected.name,
+      summary: `${selected.language} snippet from Coding`,
+      sourceWorkspace: 'coding',
+      payload: {
+        code: selected.code,
+        language: selected.language,
+      },
+    }, { attach: true });
+    if (!activeConversationId) {
+      createConversation();
+    }
+    setActiveWorkspace('chat');
+    setStatus('Attached to chat');
+  };
+
+  const openSnippetInTerminal = () => {
+    addWorkflowContext({
+      type: 'code',
+      title: selected.name,
+      summary: 'Code snippet opened from Coding workspace',
+      sourceWorkspace: 'coding',
+      payload: {
+        code: selected.code,
+        language: selected.language,
+      },
+    });
+    updateTerminalWorkspace({ input: `run ${selected.name}` });
+    setActiveWorkspace('terminal');
+  };
+
   const downloadUrl = `data:text/plain;charset=utf-8,${encodeURIComponent(selected.code)}`;
 
   return (
@@ -69,7 +132,7 @@ export function CodingWorkspace() {
 
       <div className="coding-layout">
         <aside className="artifact-list" aria-label="Code artifacts">
-          {artifacts.map((artifact) => (
+          {allArtifacts.map((artifact) => (
             <button
               key={artifact.id}
               onClick={() => {
@@ -89,6 +152,20 @@ export function CodingWorkspace() {
           <div className="code-toolbar">
             <span>{selected.name}</span>
             <div>
+              <button
+                onClick={sendSnippetToChat}
+                title="Send snippet to Chat"
+                aria-label="Send snippet to Chat"
+              >
+                <MessageSquare size={15} />
+              </button>
+              <button
+                onClick={openSnippetInTerminal}
+                title="Open snippet in Terminal"
+                aria-label="Open snippet in Terminal"
+              >
+                <TerminalSquare size={15} />
+              </button>
               <button
                 onClick={() => {
                   setWrap((value) => {

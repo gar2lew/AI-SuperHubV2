@@ -95,4 +95,33 @@ test.describe('desktop workspace shell', () => {
     await page.getByPlaceholder('Type a command...').fill('recall prompt');
     await expect(page.getByRole('button', { name: /Recall prompt: resume this local-first workstation prompt/ })).toBeVisible();
   });
+
+  test('shares lightweight workflow context across workspaces', async ({ page }) => {
+    await openDesktopApp(page);
+
+    await page.getByRole('button', { name: 'Terminal workspace' }).click();
+    await page.getByLabel('Mock terminal command').fill('npm test');
+    await page.getByRole('button', { name: 'Run mock command' }).click();
+    await page.getByRole('button', { name: 'Send output for npm test to Chat' }).click();
+
+    await expect(page.getByLabel('Message input')).toBeVisible();
+    await expect(page.getByLabel('Attached workflow context')).toContainText('Terminal Output');
+    await expect(page.getByLabel('Attached workflow context')).toContainText('npm test');
+
+    await page.getByRole('button', { name: 'Coding workspace' }).click();
+    await page.getByRole('button', { name: 'Send snippet to Chat' }).click();
+
+    await expect(page.getByLabel('Message input')).toBeVisible();
+    await expect(page.getByLabel('Attached workflow context')).toContainText('Code');
+    await expect(page.getByLabel('Attached workflow context')).toContainText('runtime-hook.ts');
+
+    await page.getByRole('button', { name: 'Toggle Right Panel' }).click();
+    await page.getByRole('tab', { name: 'Artifacts tab' }).click();
+    await expect(page.getByLabel('Reusable workflow artifacts')).toContainText('npm test');
+    await expect(page.getByLabel('Reusable workflow artifacts')).toContainText('runtime-hook.ts');
+
+    await page.reload();
+    await expect(page.getByRole('button', { name: 'Dismiss session restored notice' })).toBeVisible();
+    await expect(page.getByLabel('Attached workflow context')).toContainText('runtime-hook.ts');
+  });
 });

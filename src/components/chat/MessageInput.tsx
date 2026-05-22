@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useEffect, useLayoutEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Send, Square, Paperclip, Image, FileText } from 'lucide-react';
+import { Send, Square, Paperclip, Image, FileText, X } from 'lucide-react';
 import { useChatStore } from '@/store/chatStore';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useWorkspaceStore } from '@/store/workspaceStore';
@@ -9,6 +9,7 @@ import type { ProviderId } from '@/types';
 
 import { textContent } from '@/lib/utils';
 import { executeChatRequest } from '@/lib/core/chat-orchestrator';
+import { contextTypeLabel, formatWorkflowContextsForPrompt } from '@/lib/workflow/context';
 import {
   recordPuterAuthReplayFailed,
   recordPuterAuthReplayStarted,
@@ -57,6 +58,11 @@ export function MessageInput() {
   const selectedModel = useSettingsStore((s) => s.selectedModel);
   const workspaceContext = useWorkspaceStore((s) => s.getInjectableContext());
   const recordPrompt = useWorkstationStore((s) => s.recordPrompt);
+  const workflowContexts = useWorkstationStore((s) => s.workflowContexts);
+  const attachedWorkflowContextIds = useWorkstationStore((s) => s.attachedWorkflowContextIds);
+  const detachWorkflowContext = useWorkstationStore((s) => s.detachWorkflowContext);
+  const clearAttachedWorkflowContexts = useWorkstationStore((s) => s.clearAttachedWorkflowContexts);
+  const attachedWorkflowContexts = workflowContexts.filter((context) => attachedWorkflowContextIds.includes(context.id));
 
   useEffect(() => {
     const draft = activeConversation ? useChatStore.getState().drafts[activeConversation.id] : undefined;
@@ -185,6 +191,8 @@ export function MessageInput() {
     setRetryOverride(null);
     clearDraft(activeConversation.id);
     recordPrompt(userText, 'chat');
+    const workflowContextPrompt = formatWorkflowContextsForPrompt(attachedWorkflowContexts);
+    const mergedWorkspaceContext = [workspaceContext, workflowContextPrompt].filter(Boolean).join('\n\n');
 
     // Build content parts from text + attachments
     const contentParts = textContent(userText);
@@ -213,6 +221,7 @@ export function MessageInput() {
       });
     }
     setAttachments([]);
+    clearAttachedWorkflowContexts();
 
     await executeChatRequest(
       {
@@ -222,7 +231,7 @@ export function MessageInput() {
         selectedModel,
         selectedProvider,
         retryOverride: retryForSend,
-        workspaceContext,
+        workspaceContext: mergedWorkspaceContext,
       },
       {
         addMessage,
@@ -254,6 +263,8 @@ export function MessageInput() {
     selectedModel,
     retryOverride,
     workspaceContext,
+    attachedWorkflowContexts,
+    clearAttachedWorkflowContexts,
   ]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -361,6 +372,26 @@ export function MessageInput() {
         >
           <p className="text-accent font-medium">Drop files here</p>
         </motion.div>
+      )}
+
+      {/* Workflow context */}
+      {attachedWorkflowContexts.length > 0 && (
+        <div className="workflow-context-strip chat-width mx-auto mb-2" aria-label="Attached workflow context">
+          {attachedWorkflowContexts.map((context) => (
+            <div key={context.id} className="workflow-context-chip">
+              <span className="workflow-context-type">{contextTypeLabel(context.type)}</span>
+              <span className="workflow-context-title">{context.title}</span>
+              <button
+                type="button"
+                onClick={() => detachWorkflowContext(context.id)}
+                aria-label={`Remove workflow context ${context.title}`}
+                title="Remove context"
+              >
+                <X size={12} />
+              </button>
+            </div>
+          ))}
+        </div>
       )}
 
       {/* Attachments */}

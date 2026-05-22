@@ -1,5 +1,7 @@
-import { useState } from 'react';
-import { CheckCircle2, CornerDownLeft, Terminal as TerminalIcon } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { CheckCircle2, CornerDownLeft, MessageSquare, StickyNote, Terminal as TerminalIcon } from 'lucide-react';
+import { useChatStore } from '@/store/chatStore';
+import { useSettingsStore } from '@/store/settingsStore';
 import { terminalAdapter, type TerminalEntry } from '@/lib/terminal';
 import { useWorkstationStore } from '@/store/workstationStore';
 
@@ -7,10 +9,18 @@ export function TerminalWorkspace() {
   const savedState = useWorkstationStore((s) => s.terminalWorkspace);
   const updateTerminalWorkspace = useWorkstationStore((s) => s.updateTerminalWorkspace);
   const recordCommand = useWorkstationStore((s) => s.recordCommand);
+  const addWorkflowContext = useWorkstationStore((s) => s.addWorkflowContext);
+  const setActiveWorkspace = useSettingsStore((s) => s.setActiveWorkspace);
+  const activeConversationId = useChatStore((s) => s.activeConversationId);
+  const createConversation = useChatStore((s) => s.createConversation);
   const [input, setInput] = useState(savedState.input);
   const [history, setHistory] = useState<TerminalEntry[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [height, setHeight] = useState(savedState.height);
+
+  useEffect(() => {
+    setInput((current) => (current === savedState.input ? current : savedState.input));
+  }, [savedState.input]);
 
   const execute = async () => {
     const entry = await terminalAdapter.execute(input);
@@ -30,6 +40,38 @@ export function TerminalWorkspace() {
     const next = Math.min(history.length - 1, Math.max(0, historyIndex + direction));
     setHistoryIndex(next);
     setInput(history[next].command);
+  };
+
+  const sendOutputToChat = (entry: TerminalEntry) => {
+    addWorkflowContext({
+      type: 'terminal-output',
+      title: entry.command,
+      summary: entry.output,
+      sourceWorkspace: 'terminal',
+      payload: {
+        command: entry.command,
+        output: entry.output,
+        metadata: {
+          status: entry.status,
+        },
+      },
+    }, { attach: true });
+    if (!activeConversationId) {
+      createConversation();
+    }
+    setActiveWorkspace('chat');
+  };
+
+  const saveOutputAsNote = (entry: TerminalEntry) => {
+    addWorkflowContext({
+      type: 'workspace-note',
+      title: `Note: ${entry.command}`,
+      summary: entry.output,
+      sourceWorkspace: 'terminal',
+      payload: {
+        text: `$ ${entry.command}\n${entry.output}`,
+      },
+    });
   };
 
   return (
@@ -81,6 +123,14 @@ export function TerminalWorkspace() {
                   {new Date(entry.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                   {' · '}
                   {entry.status}
+                </span>
+                <span className="terminal-entry-actions">
+                  <button type="button" onClick={() => sendOutputToChat(entry)} aria-label={`Send output for ${entry.command} to Chat`} title="Send output to Chat">
+                    <MessageSquare size={12} />
+                  </button>
+                  <button type="button" onClick={() => saveOutputAsNote(entry)} aria-label={`Save output for ${entry.command} as note`} title="Save output as note">
+                    <StickyNote size={12} />
+                  </button>
                 </span>
                 {'\n'}
                 <span>$ {entry.command}</span>

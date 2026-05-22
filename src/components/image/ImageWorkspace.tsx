@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Download, Image as ImageIcon, Sparkles, X } from 'lucide-react';
+import { Download, Image as ImageIcon, MessageSquare, Sparkles, X } from 'lucide-react';
 import { streamImageGeneration } from '@/lib/providers/puter/image';
 import { CAPABILITY_LABELS } from '@/lib/models/capabilities';
 import { getModelMetadata } from '@/lib/models/metadata';
@@ -7,6 +7,8 @@ import { modelRegistry } from '@/lib/models/registry';
 import { formatProviderError } from '@/lib/providers/errors';
 import { resetPuterConnectionStateForRetry } from '@/lib/providers/puter/runtime';
 import { trackObjectUrlRevoked } from '@/lib/diagnostics/resourceTracker';
+import { useChatStore } from '@/store/chatStore';
+import { useSettingsStore } from '@/store/settingsStore';
 import { useWorkstationStore } from '@/store/workstationStore';
 import type { NormalizedImageArtifact } from '@/lib/providers/puter/normalize';
 
@@ -17,6 +19,10 @@ export function ImageWorkspace() {
   const savedState = useWorkstationStore((s) => s.imageWorkspace);
   const updateImageWorkspace = useWorkstationStore((s) => s.updateImageWorkspace);
   const recordPrompt = useWorkstationStore((s) => s.recordPrompt);
+  const addWorkflowContext = useWorkstationStore((s) => s.addWorkflowContext);
+  const setActiveWorkspace = useSettingsStore((s) => s.setActiveWorkspace);
+  const activeConversationId = useChatStore((s) => s.activeConversationId);
+  const createConversation = useChatStore((s) => s.createConversation);
   const [prompt, setPrompt] = useState(savedState.prompt);
   const imageModels = useMemo(() => modelRegistry.getByCapability('image'), []);
   const [model, setModel] = useState(savedState.model || imageModels[0]?.id || DEFAULT_IMAGE_MODEL);
@@ -74,6 +80,44 @@ export function ImageWorkspace() {
   const cancelGeneration = () => {
     abortControllerRef.current?.abort();
     setStatus('Cancelling');
+  };
+
+  const attachPromptToChat = () => {
+    if (!prompt.trim()) return;
+    addWorkflowContext({
+      type: 'prompt',
+      title: 'Image prompt',
+      summary: prompt.trim(),
+      sourceWorkspace: 'image',
+      payload: {
+        prompt: prompt.trim(),
+      },
+    }, { attach: true });
+    if (!activeConversationId) {
+      createConversation();
+    }
+    setActiveWorkspace('chat');
+  };
+
+  const attachArtifactToChat = (artifact: NormalizedImageArtifact) => {
+    addWorkflowContext({
+      type: 'image-artifact',
+      title: artifact.prompt || 'Image artifact',
+      summary: artifact.prompt || artifact.id,
+      sourceWorkspace: 'image',
+      payload: {
+        artifactId: artifact.id,
+        prompt: artifact.prompt,
+        url: artifact.url,
+        metadata: {
+          createdAt: artifact.createdAt,
+        },
+      },
+    }, { attach: true });
+    if (!activeConversationId) {
+      createConversation();
+    }
+    setActiveWorkspace('chat');
   };
 
   useEffect(() => {
@@ -138,10 +182,16 @@ export function ImageWorkspace() {
               <X size={16} />
             </button>
           ) : (
-            <button onClick={generate} disabled={!prompt.trim()} className="primary-action" aria-label="Generate image">
-              <Sparkles size={16} />
-              Generate
-            </button>
+            <>
+              <button onClick={attachPromptToChat} disabled={!prompt.trim()} className="secondary-action" aria-label="Attach prompt to Chat">
+                <MessageSquare size={16} />
+                Chat
+              </button>
+              <button onClick={generate} disabled={!prompt.trim()} className="primary-action" aria-label="Generate image">
+                <Sparkles size={16} />
+                Generate
+              </button>
+            </>
           )}
         </div>
       </div>
@@ -202,9 +252,14 @@ export function ImageWorkspace() {
               </button>
               <figcaption>
                 <span>{artifact.prompt}</span>
-                <a href={artifact.url} download={`image-${artifact.id}.png`} title="Download image">
-                  <Download size={15} />
-                </a>
+                <span className="artifact-card-actions">
+                  <button type="button" onClick={() => attachArtifactToChat(artifact)} title="Attach image artifact to Chat" aria-label="Attach image artifact to Chat">
+                    <MessageSquare size={15} />
+                  </button>
+                  <a href={artifact.url} download={`image-${artifact.id}.png`} title="Download image">
+                    <Download size={15} />
+                  </a>
+                </span>
               </figcaption>
             </figure>
           ))

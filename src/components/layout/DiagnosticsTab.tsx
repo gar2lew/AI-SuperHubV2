@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   Clock,
   LogIn,
+  MessageSquare,
   RefreshCw,
   ShieldAlert,
   Trash2,
@@ -13,6 +14,7 @@ import {
 } from 'lucide-react';
 import { DeploymentStatus } from '@/components/deployment/DeploymentStatus';
 import { useChatStore } from '@/store/chatStore';
+import { useSettingsStore } from '@/store/settingsStore';
 import { useWorkstationStore } from '@/store/workstationStore';
 import { getAllHealth, getCooldownInfo, getHealth } from '@/lib/providers/health';
 import { getAllProviderAnalytics, getProviderAnalytics } from '@/lib/providers/analytics';
@@ -38,9 +40,13 @@ export function DiagnosticsTab() {
   const [authActionStatus, setAuthActionStatus] = useState<'idle' | 'working' | 'done' | 'failed'>('idle');
   const expandedSections = useWorkstationStore((s) => s.diagnosticsWorkspace.expandedSections);
   const toggleDiagnosticsSection = useWorkstationStore((s) => s.toggleDiagnosticsSection);
+  const addWorkflowContext = useWorkstationStore((s) => s.addWorkflowContext);
+  const setActiveWorkspace = useSettingsStore((s) => s.setActiveWorkspace);
   const activeConversation = useChatStore((s) =>
     s.conversations.find((c) => c.id === s.activeConversationId)
   );
+  const activeConversationId = useChatStore((s) => s.activeConversationId);
+  const createConversation = useChatStore((s) => s.createConversation);
   const currentStreamId = useChatStore((s) => s.getCurrentStreamId());
   const healthRecords = getAllHealth();
   const analyticsRecords = getAllProviderAnalytics();
@@ -111,6 +117,32 @@ export function DiagnosticsTab() {
     }
   }
 
+  function attachDiagnosticsToChat() {
+    addWorkflowContext({
+      type: 'diagnostics-snapshot',
+      title: 'Diagnostics snapshot',
+      summary: `${runtimeModeLabel}; auth ${puterStatus.runtime.authState}; stream ${streamHealth}; errors ${clientErrors.length}`,
+      sourceWorkspace: 'diagnostics',
+      payload: {
+        text: [
+          `Runtime: ${runtimeModeLabel}`,
+          `Auth: ${puterStatus.runtime.authState}`,
+          `Provider: ${streaming?.providerId ?? routeDiagnostics?.resolvedProviderId ?? activeModelMetadata?.providerName ?? 'none'}`,
+          `Model: ${activeModel?.label ?? activeConversation?.modelId ?? 'none'}`,
+          `Stream: ${streamHealth}`,
+          `Client errors: ${clientErrors.length}`,
+          `Tool active: ${toolRuntime.activeCount}`,
+          `Tool timeouts: ${toolRuntime.timeoutCount}`,
+          `Fallback: ${routeDiagnostics?.usedFallback ? 'used' : 'none'}`,
+        ].join('\n'),
+      },
+    }, { attach: true });
+    if (!activeConversationId) {
+      createConversation();
+    }
+    setActiveWorkspace('chat');
+  }
+
   return (
     <div className="diagnostics-stack">
       <div className="diagnostic-summary diagnostics-sticky diagnostics-priority-0">
@@ -130,9 +162,15 @@ export function DiagnosticsTab() {
           <h4 className="text-xs font-semibold uppercase tracking-wider text-text-primary">
             Operator Summary
           </h4>
-          <span className={authNeedsAction || clientErrors.length > 0 ? 'status-pill is-warning' : 'status-pill is-active'}>
-            {authNeedsAction || clientErrors.length > 0 ? 'Action needed' : 'Ready'}
-          </span>
+          <div className="flex items-center gap-1.5">
+            <button type="button" className="workflow-mini-action" onClick={attachDiagnosticsToChat} aria-label="Attach diagnostics snapshot to Chat" title="Attach diagnostics snapshot to Chat">
+              <MessageSquare size={12} />
+              Chat
+            </button>
+            <span className={authNeedsAction || clientErrors.length > 0 ? 'status-pill is-warning' : 'status-pill is-active'}>
+              {authNeedsAction || clientErrors.length > 0 ? 'Action needed' : 'Ready'}
+            </span>
+          </div>
         </div>
         <div className="operator-grid text-xs">
           <InfoRow label="Mode" value={runtimeModeLabel} tone={puterStatus.runtime.executionMode === 'live' ? 'success' : 'warning'} />

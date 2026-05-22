@@ -280,6 +280,7 @@ a {
 
 .control-surface,
 .attachment-chip,
+.workflow-context-chip,
 .content-chip,
 .content-card,
 .kbd-token {
@@ -287,6 +288,83 @@ a {
   background:
     linear-gradient(180deg, rgba(33, 27, 43, 0.66), rgba(16, 14, 22, 0.7));
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.026);
+}
+
+.workflow-context-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.workflow-context-chip {
+  min-width: 0;
+  max-width: min(100%, 26rem);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  border: 1px solid rgba(174, 142, 232, 0.14);
+  background: rgba(23, 19, 31, 0.8);
+  color: var(--color-text-secondary);
+  padding: 0.32rem 0.42rem 0.32rem 0.55rem;
+  font-size: 0.74rem;
+}
+
+.workflow-context-type {
+  flex-shrink: 0;
+  color: var(--color-accent-hover);
+  font-weight: 700;
+}
+
+.workflow-context-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-context-chip button,
+.workflow-icon-action,
+.workflow-mini-action,
+.terminal-entry-actions button,
+.artifact-card-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-control);
+  border: 1px solid rgba(174, 142, 232, 0.12);
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--color-text-muted);
+}
+
+.workflow-context-chip button,
+.workflow-icon-action,
+.terminal-entry-actions button,
+.artifact-card-actions button {
+  width: 1.55rem;
+  height: 1.55rem;
+}
+
+.workflow-context-chip button:hover,
+.workflow-icon-action:hover,
+.workflow-mini-action:hover,
+.terminal-entry-actions button:hover,
+.artifact-card-actions button:hover {
+  color: var(--color-text-primary);
+  border-color: rgba(174, 142, 232, 0.22);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.workflow-icon-action.danger:hover {
+  color: var(--color-error);
+  border-color: rgba(239, 68, 68, 0.28);
+}
+
+.workflow-mini-action {
+  gap: 0.28rem;
+  min-height: 1.5rem;
+  padding: 0 0.45rem;
+  font-size: 0.68rem;
+  font-weight: 700;
 }
 
 .content-card {
@@ -794,6 +872,28 @@ select:focus-visible {
   white-space: nowrap;
 }
 
+.artifact-card-actions {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.artifact-card-actions a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.55rem;
+  height: 1.55rem;
+  border-radius: var(--radius-control);
+  color: var(--color-text-muted);
+}
+
+.artifact-card-actions a:hover {
+  color: var(--color-text-primary);
+  background: rgba(255, 255, 255, 0.05);
+}
+
 .empty-workspace {
   grid-column: 1 / -1;
   min-height: 18rem;
@@ -1171,6 +1271,23 @@ select:focus-visible {
   align-items: center;
   gap: 0.35rem;
   color: var(--color-success) !important;
+}
+
+.terminal-entry-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-left: 0.5rem;
+}
+
+.workflow-artifact-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.workflow-artifact-card {
+  min-width: 0;
 }
 
 .terminal-resize {

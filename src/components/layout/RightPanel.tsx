@@ -8,10 +8,14 @@ import {
   Upload,
   Box,
   Activity,
+  MessageSquare,
+  Trash2,
 } from 'lucide-react';
 import { useSettingsStore } from '@/store/settingsStore';
+import { useWorkstationStore } from '@/store/workstationStore';
 import { toolRegistry } from '@/lib/tools/registry';
 import { trackLazyImport } from '@/lib/diagnostics/client-errors';
+import { contextTypeLabel } from '@/lib/workflow/context';
 
 export type RightPanelTab = 'files' | 'uploads' | 'tools' | 'artifacts' | 'diagnostics';
 
@@ -155,11 +159,43 @@ const ToolsTab = memo(function ToolsTab() {
 });
 
 function ArtifactsTab() {
+  const workflowContexts = useWorkstationStore((s) => s.workflowContexts);
+  const attachWorkflowContext = useWorkstationStore((s) => s.attachWorkflowContext);
+  const removeWorkflowContext = useWorkstationStore((s) => s.removeWorkflowContext);
+
+  if (workflowContexts.length > 0) {
+    return (
+      <div className="workflow-artifact-list" aria-label="Reusable workflow artifacts">
+        {workflowContexts.slice(0, 16).map((context) => (
+          <div key={context.id} className="telemetry-card workflow-artifact-card p-3">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium text-text-primary">{context.title}</p>
+                <p className="mt-0.5 text-[11px] uppercase tracking-wide text-text-muted">
+                  {contextTypeLabel(context.type)} · {context.sourceWorkspace}
+                </p>
+              </div>
+              <div className="flex shrink-0 items-center gap-1">
+                <button type="button" className="workflow-icon-action" onClick={() => attachWorkflowContext(context.id)} aria-label={`Attach ${context.title} to Chat`} title="Attach to Chat">
+                  <MessageSquare size={13} />
+                </button>
+                <button type="button" className="workflow-icon-action danger" onClick={() => removeWorkflowContext(context.id)} aria-label={`Remove ${context.title}`} title="Remove artifact">
+                  <Trash2 size={13} />
+                </button>
+              </div>
+            </div>
+            <p className="mt-2 line-clamp-3 text-xs leading-5 text-text-secondary">{context.summary}</p>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
   return (
     <div className="text-center py-8">
       <Box size={32} className="mx-auto mb-3 text-text-muted opacity-40" />
-      <p className="text-sm text-text-muted">No artifacts yet</p>
-      <p className="text-xs text-text-muted mt-1">Generated files will appear here</p>
+      <p className="text-sm text-text-muted">No workflow artifacts yet</p>
+      <p className="text-xs text-text-muted mt-1">Sent snippets and outputs will appear here</p>
     </div>
   );
 }

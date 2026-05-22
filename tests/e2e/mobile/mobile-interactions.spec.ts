@@ -124,4 +124,16 @@ test.describe('mobile layout and interaction stability', () => {
     await expect(page.getByLabel('Image prompt')).toHaveValue('mobile continuity prompt');
     await expectNoHorizontalDocumentOverflow(page);
   });
+
+  test('mobile workflow context attaches an image prompt to chat', async ({ page }) => {
+    await page.getByLabel('Image workspace').tap();
+    await page.getByLabel('Image prompt').fill('mobile workflow image context');
+    await page.getByLabel('Attach prompt to Chat').tap();
+
+    await expect(page.getByLabel('Message input')).toBeVisible();
+    await expect(page.getByLabel('Attached workflow context')).toContainText('Prompt');
+    await expect(page.getByLabel('Attached workflow context')).toContainText('Image prompt');
+    await expectWithinViewport(page.getByLabel('Attached workflow context'), 'mobile workflow context chip');
+    await expectNoHorizontalDocumentOverflow(page);
+  });
 });

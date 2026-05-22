@@ -1,5 +1,7 @@
 import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
-import { Check, ChevronsUpDown, Copy, Download, Play, WrapText } from 'lucide-react';
+import { Check, ChevronsUpDown, Copy, Download, FileCode2, Play, WrapText } from 'lucide-react';
+import { useSettingsStore } from '@/store/settingsStore';
+import { useWorkstationStore } from '@/store/workstationStore';
 
 interface CodeBlockProps {
   language: string;
@@ -38,6 +40,9 @@ export const CodeBlock = memo(function CodeBlock({ language, children, deferHigh
   const [shouldHighlight, setShouldHighlight] = useState(
     () => children.length <= IMMEDIATE_HIGHLIGHT_CHAR_LIMIT
   );
+  const addWorkflowContext = useWorkstationStore((s) => s.addWorkflowContext);
+  const updateCodingWorkspace = useWorkstationStore((s) => s.updateCodingWorkspace);
+  const setActiveWorkspace = useSettingsStore((s) => s.setActiveWorkspace);
 
   const handleCopy = useCallback(async () => {
     await navigator.clipboard.writeText(children);
@@ -95,6 +100,23 @@ export const CodeBlock = memo(function CodeBlock({ language, children, deferHigh
     [children]
   );
 
+  const openInCoding = useCallback(() => {
+    const contextId = addWorkflowContext({
+      type: 'code',
+      title: `Chat snippet.${displayLanguage}`,
+      summary: children,
+      sourceWorkspace: 'chat',
+      payload: {
+        code: children,
+        language: displayLanguage,
+      },
+    });
+    if (contextId) {
+      updateCodingWorkspace({ selectedArtifactId: contextId });
+    }
+    setActiveWorkspace('coding');
+  }, [addWorkflowContext, children, displayLanguage, setActiveWorkspace, updateCodingWorkspace]);
+
   const plainCode = useMemo(
     () => (
       <pre className={`overflow-x-auto p-4 text-[0.8125rem] leading-relaxed ${wrap ? 'whitespace-pre-wrap' : ''}`}>
@@ -134,6 +156,15 @@ export const CodeBlock = memo(function CodeBlock({ language, children, deferHigh
           >
             <WrapText size={12} />
             <span>Wrap</span>
+          </button>
+          <button
+            onClick={openInCoding}
+            className="code-tool-button"
+            title="Open in Coding"
+            aria-label="Open snippet in Coding"
+          >
+            <FileCode2 size={12} />
+            <span>Coding</span>
           </button>
           <button
             onClick={handleCopy}

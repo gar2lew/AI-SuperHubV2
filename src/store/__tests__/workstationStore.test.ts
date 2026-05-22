@@ -13,6 +13,8 @@ function resetWorkstationStore() {
     commandHistory: [],
     recentPrompts: [],
     workspaceUi: {},
+    workflowContexts: [],
+    attachedWorkflowContextIds: [],
     imageWorkspace: {
       prompt: '',
       model: 'gpt-image-1-mini',
@@ -134,11 +136,87 @@ describe('workstationStore', () => {
       workspaceUi: {
         chat: { scrollTop: 120, updatedAt: Date.now() },
       },
+      workflowContexts: [
+        {
+          id: 'workflow:old',
+          type: 'terminal-output',
+          title: 'Old output',
+          summary: 'stale',
+          sourceWorkspace: 'terminal',
+          payload: { output: 'old' },
+          createdAt: Date.now(),
+          useCount: 1,
+        },
+      ],
+      attachedWorkflowContextIds: ['workflow:old'],
     });
 
     expect(repaired.metadata?.invalidationReason).toBe('stale persisted workstation state');
     expect(repaired.commandHistory).toEqual([]);
     expect(repaired.recentPrompts).toEqual([]);
     expect(repaired.workspaceUi).toEqual({});
+    expect(repaired.workflowContexts).toEqual([]);
+    expect(repaired.attachedWorkflowContextIds).toEqual([]);
+  });
+
+  it('stores bounded workflow context packets and deduplicates attachments', () => {
+    const store = useWorkstationStore.getState();
+
+    const firstId = store.addWorkflowContext({
+      type: 'terminal-output',
+      title: 'Terminal output',
+      sourceWorkspace: 'terminal',
+      payload: {
+        command: 'npm test',
+        output: 'all tests passed',
+      },
+    }, { attach: true });
+    const secondId = useWorkstationStore.getState().addWorkflowContext({
+      type: 'terminal-output',
+      title: 'Terminal output',
+      sourceWorkspace: 'terminal',
+      payload: {
+        command: 'npm test',
+        output: 'all tests passed',
+      },
+    }, { attach: true });
+
+    expect(firstId).toBe(secondId);
+    expect(useWorkstationStore.getState().workflowContexts).toHaveLength(1);
+    expect(useWorkstationStore.getState().workflowContexts[0]).toMatchObject({
+      type: 'terminal-output',
+      useCount: 2,
+    });
+    expect(useWorkstationStore.getState().attachedWorkflowContextIds).toEqual([firstId]);
+  });
+
+  it('repairs invalid workflow context references and strips unsafe payload values', () => {
+    const repaired = sanitizeHydratedWorkstationState({
+      metadata: {
+        schemaVersion: 2,
+        restoredAt: null,
+        persistedAt: Date.now(),
+      },
+      workflowContexts: [
+        {
+          id: 'workflow:image',
+          type: 'image-artifact',
+          title: 'Image artifact',
+          summary: 'generated',
+          sourceWorkspace: 'image',
+          payload: {
+            url: 'blob:http://local/unsafe',
+            prompt: 'A workstation',
+          },
+          createdAt: Date.now(),
+          useCount: 1,
+        },
+      ],
+      attachedWorkflowContextIds: ['workflow:image', 'workflow:missing', 'workflow:image'],
+    });
+
+    expect(repaired.workflowContexts).toHaveLength(1);
+    expect(repaired.workflowContexts?.[0].payload.url).toBeUndefined();
+    expect(repaired.attachedWorkflowContextIds).toEqual(['workflow:image']);
   });
 });

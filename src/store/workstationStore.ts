@@ -10,6 +10,15 @@ import {
   type PersistenceMetadata,
   WORKSTATION_SCHEMA_VERSION,
 } from '@/lib/persistence/governance';
+import {
+  createWorkflowContextPacket,
+  sanitizeAttachedWorkflowContextIds,
+  sanitizeWorkflowContexts,
+  WORKFLOW_CONTEXT_ATTACHMENT_LIMIT,
+  WORKFLOW_CONTEXT_HISTORY_LIMIT,
+  type WorkflowContextInput,
+  type WorkflowContextPacket,
+} from '@/lib/workflow/context';
 
 type CommandKind = 'command' | 'prompt' | 'workspace' | 'model';
 
@@ -72,10 +81,17 @@ interface WorkstationState {
   terminalWorkspace: TerminalWorkspaceState;
   codingWorkspace: CodingWorkspaceState;
   diagnosticsWorkspace: DiagnosticsWorkspaceState;
+  workflowContexts: WorkflowContextPacket[];
+  attachedWorkflowContextIds: string[];
 
   markRestoredNoticeDismissed: () => void;
   recordCommand: (entry: Omit<CommandHistoryEntry, 'id' | 'createdAt' | 'useCount'> & { createdAt?: number }) => void;
   recordPrompt: (prompt: string, workspace?: WorkspaceId) => void;
+  addWorkflowContext: (input: WorkflowContextInput, options?: { attach?: boolean }) => string | null;
+  attachWorkflowContext: (id: string) => void;
+  detachWorkflowContext: (id: string) => void;
+  clearAttachedWorkflowContexts: () => void;
+  removeWorkflowContext: (id: string) => void;
   setWorkspaceScroll: (workspace: WorkspaceId | UtilityTabId, scrollTop: number) => void;
   updateImageWorkspace: (updates: Partial<Omit<ImageWorkspaceState, 'updatedAt'>>) => void;
   updateVoiceWorkspace: (updates: Partial<Omit<VoiceWorkspaceState, 'updatedAt'>>) => void;
@@ -191,6 +207,13 @@ export function sanitizeHydratedWorkstationState(state: Partial<WorkstationState
     commandHistory: stale ? [] : normalizeCommandHistory(state.commandHistory),
     recentPrompts: stale ? [] : normalizeCommandHistory(state.recentPrompts).filter((entry) => entry.kind === 'prompt'),
     workspaceUi: stale ? {} : normalizeScrollState(state.workspaceUi),
+    workflowContexts: stale ? [] : sanitizeWorkflowContexts(state.workflowContexts, WORKFLOW_CONTEXT_HISTORY_LIMIT),
+    attachedWorkflowContextIds: stale
+      ? []
+      : sanitizeAttachedWorkflowContextIds(
+          state.attachedWorkflowContextIds,
+          sanitizeWorkflowContexts(state.workflowContexts, WORKFLOW_CONTEXT_HISTORY_LIMIT)
+        ),
     imageWorkspace: {
       ...defaultImageWorkspace,
       ...(state.imageWorkspace && typeof state.imageWorkspace === 'object' ? state.imageWorkspace : {}),
@@ -247,6 +270,8 @@ export const useWorkstationStore = create<WorkstationState>()(
       commandHistory: [],
       recentPrompts: [],
       workspaceUi: {},
+      workflowContexts: [],
+      attachedWorkflowContextIds: [],
       imageWorkspace: defaultImageWorkspace,
       voiceWorkspace: defaultVoiceWorkspace,
       terminalWorkspace: defaultTerminalWorkspace,
@@ -307,6 +332,44 @@ export const useWorkstationStore = create<WorkstationState>()(
             recentPrompts: dedupeBy([merged, ...state.recentPrompts], (item) => item.id, 12),
           };
         }),
+      addWorkflowContext: (input, options) => {
+        const packet = createWorkflowContextPacket(input);
+        if (!packet.summary && Object.keys(packet.payload).length === 0) return null;
+        set((state) => {
+          const previous = state.workflowContexts.find((context) => context.id === packet.id);
+          const merged = previous
+            ? { ...previous, ...packet, useCount: previous.useCount + 1, createdAt: packet.createdAt }
+            : packet;
+          return {
+            metadata: markPersisted(state.metadata),
+            workflowContexts: dedupeBy([merged, ...state.workflowContexts], (context) => context.id, WORKFLOW_CONTEXT_HISTORY_LIMIT),
+            attachedWorkflowContextIds: options?.attach
+              ? [merged.id, ...state.attachedWorkflowContextIds.filter((id) => id !== merged.id)].slice(0, WORKFLOW_CONTEXT_ATTACHMENT_LIMIT)
+              : state.attachedWorkflowContextIds,
+          };
+        });
+        return packet.id;
+      },
+      attachWorkflowContext: (id) => set((state) => {
+        if (!state.workflowContexts.some((context) => context.id === id)) return {};
+        return {
+          metadata: markPersisted(state.metadata),
+          attachedWorkflowContextIds: [id, ...state.attachedWorkflowContextIds.filter((item) => item !== id)].slice(0, WORKFLOW_CONTEXT_ATTACHMENT_LIMIT),
+        };
+      }),
+      detachWorkflowContext: (id) => set((state) => ({
+        metadata: markPersisted(state.metadata),
+        attachedWorkflowContextIds: state.attachedWorkflowContextIds.filter((item) => item !== id),
+      })),
+      clearAttachedWorkflowContexts: () => set((state) => ({
+        metadata: markPersisted(state.metadata),
+        attachedWorkflowContextIds: [],
+      })),
+      removeWorkflowContext: (id) => set((state) => ({
+        metadata: markPersisted(state.metadata),
+        workflowContexts: state.workflowContexts.filter((context) => context.id !== id),
+        attachedWorkflowContextIds: state.attachedWorkflowContextIds.filter((item) => item !== id),
+      })),
       setWorkspaceScroll: (workspace, scrollTop) =>
         set((state) => ({
           metadata: markPersisted(state.metadata),
@@ -361,6 +424,8 @@ export const useWorkstationStore = create<WorkstationState>()(
         commandHistory: state.commandHistory,
         recentPrompts: state.recentPrompts,
         workspaceUi: state.workspaceUi,
+        workflowContexts: state.workflowContexts,
+        attachedWorkflowContextIds: state.attachedWorkflowContextIds,
         imageWorkspace: state.imageWorkspace,
         voiceWorkspace: state.voiceWorkspace,
         terminalWorkspace: state.terminalWorkspace,
